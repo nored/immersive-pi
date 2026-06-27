@@ -604,13 +604,16 @@ class _ApiHandler(SimpleHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         if path.startswith("/media/"):
             self._serve_media(path[len("/media/"):]); return
-        if path in ("/api/power", "/api/playlist", "/api/show"):
+        if path in ("/api/power", "/api/playlist", "/api/videos", "/api/show"):
             if not self._authed():
                 self._json(401, {"error": "unauthorized"}); return
             if path == "/api/power":
                 self._json(200, self.controller.power_status())
-            elif path == "/api/playlist":
-                self._json(200, self.controller.playlist())
+            elif path in ("/api/playlist", "/api/videos"):
+                pl = self.controller.playlist()
+                self._json(200, {"videos": pl["videos"], "count": len(pl["videos"]),
+                                 "current": pl["current"], "playing": pl["playing"],
+                                 "media_dir": pl["media_dir"]})
             else:
                 self._json(200, self.controller.show)
             return
