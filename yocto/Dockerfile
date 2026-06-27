@@ -53,6 +53,11 @@ MACHINE = "immersive-pi"
 DISTRO_FEATURES:remove = "x11 vulkan wayland"
 DISTRO_FEATURES:append = " opengl systemd pam"
 INIT_MANAGER = "systemd"
+# Wired-only network stack = systemd-networkd + systemd-resolved. NO
+# NetworkManager and NO connman (they do not work reliably on this setup);
+# hard-exclude them so no recommendation can pull them in.
+PACKAGE_EXCLUDE += "networkmanager networkmanager-nmcli connman connman-client connman-gnome"
+BAD_RECOMMENDATIONS += "networkmanager connman"
 PREFERRED_VERSION_linux-raspberrypi = "6.12%"
 # opencv with the python bindings (control-node structured-light scan).
 PACKAGECONFIG:append:pn-opencv = " python3"

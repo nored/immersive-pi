@@ -1,0 +1,9 @@
+# Default wired config (DHCP) shipped in the image so eth0 always comes up even
+# before immersive-net.sh runs. The early net service overwrites this with the
+# role-correct config (static for control, DHCP for render). systemd-networkd
+# only — no NetworkManager, no connman.
+[Match]
+Name=eth0
+
+[Network]
+DHCP=ipv4

@@ -4,6 +4,14 @@ Adding a node and giving it an address is done entirely from the calibration
 website. No SSH, no editing the image. The control node is the DHCP server for
 the dedicated switch; the website is its front end.
 
+## Network stack
+
+Wired only, **systemd-networkd + systemd-resolved** — no NetworkManager, no
+connman (both are hard-excluded from the image). `immersive-net.service` writes
+`/etc/systemd/network/10-eth0.network` before networkd starts: a static address
+for the control node, DHCP for render nodes. (yBrowser used iwd because it is a
+WiFi device; this cluster is wired, so there is no iwd.)
+
 ## How addressing works
 
 - The **control node** has a static IP (its `control_ip`, default `10.0.0.13`)

@@ -18,7 +18,6 @@ HOST=$(get hostname);      HOST=${HOST:-$NODE}
 TOKEN=$(get api_token)
 ALLOW=$(get allow_poweroff); ALLOW=${ALLOW:-true}
 TZ=$(get timezone)
-CTRL_IP=$(get control_ip); CTRL_IP=${CTRL_IP:-10.0.0.13}
 
 mkdir -p /run/immersive
 echo "$ROLE" > /run/immersive/role
@@ -48,29 +47,5 @@ EOF
 # control node environment (token for the Node-RED power API)
 echo "IMMERSIVE_API_TOKEN=${TOKEN:-}" > /run/immersive/control.env
 
-# Network: the control node is the DHCP server + gateway with a static IP; render
-# nodes take DHCP and receive their reserved address (the website assigns it,
-# keyed by MAC). systemd-networkd applies it.
-mkdir -p /etc/systemd/network
-if [ "$ROLE" = "control" ]; then
-    cat > /etc/systemd/network/10-eth0.network <<EOF
-[Match]
-Name=eth0
-[Network]
-Address=$CTRL_IP/24
-EOF
-    # ensure dnsmasq reads the reservations the controller writes
-    grep -q '^conf-dir=/etc/dnsmasq.d' /etc/dnsmasq.conf 2>/dev/null \
-        || echo 'conf-dir=/etc/dnsmasq.d' >> /etc/dnsmasq.conf
-else
-    cat > /etc/systemd/network/10-eth0.network <<EOF
-[Match]
-Name=eth0
-[Network]
-DHCP=ipv4
-EOF
-fi
-systemctl enable systemd-networkd 2>/dev/null || true
-systemctl restart systemd-networkd 2>/dev/null || true
-
+# (Networking is configured earlier by immersive-net.service, before networkd.)
 echo "immersive-config: role=$ROLE node=$NODE control=$CTRL host=$HOST"
