@@ -4,15 +4,6 @@
   "media": "pan.mp4",
   "loop": true,
   "canvas": { "cols": 12, "rows": 1 },
-  "network": {
-    "iface": "eth0",
-    "subnet": "10.0.0.0/24",
-    "gateway": "10.0.0.13",
-    "dns": "10.0.0.13",
-    "pool_start": "10.0.0.200",
-    "pool_end": "10.0.0.250",
-    "lease": "12h"
-  },
   "power": {
     "backend": "none",
     "wake_wait_s": 45,

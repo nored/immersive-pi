@@ -104,19 +104,17 @@ function renderThumbs() {
 
     const admin = document.createElement("div");
     admin.className = "node-admin";
-    const ipi = document.createElement("input");
-    ipi.className = "ip"; ipi.placeholder = "ip address";
-    ipi.value = (n.net && n.net.ip) || "";
-    ipi.title = "node IP (saved to the room-model)";
-    ipi.onchange = () =>
-      send({ cmd: "set_node_net", node: n.node, ip: ipi.value.trim() });
+    const addr = document.createElement("span");
+    addr.className = "addr";
+    addr.textContent = `${n.node}.local`;     // reached by mDNS, address via DHCP
+    addr.title = (n.net && n.net.mac) ? `mDNS · ${n.net.mac}` : "reachable via mDNS";
     const rm = document.createElement("button");
     rm.className = "rm"; rm.textContent = "×"; rm.title = "remove node";
     rm.onclick = () => {
       if (confirm(`Remove ${n.node} from the room?`))
         send({ cmd: "remove_node", node: n.node });
     };
-    admin.append(ipi, rm);
+    admin.append(addr, rm);
 
     row.append(d, admin);
     wrap.appendChild(row);
@@ -145,8 +143,8 @@ function renderPending() {
       const node = prompt("Assign node id:", `pi-${String(next).padStart(2, "0")}`);
       if (!node) return;
       const role = (prompt("Role (render / control):", "render") || "render").trim();
-      const ip = prompt(`IP for ${node.trim()} (reserved by DHCP):`, "") || "";
-      send({ cmd: "enroll_node", pending: id, node: node.trim(), role, ip: ip.trim() });
+      // no IP — the node keeps its DHCP address and is reached as <node>.local
+      send({ cmd: "enroll_node", pending: id, node: node.trim(), role });
     };
     row.appendChild(btn);
     list.appendChild(row);

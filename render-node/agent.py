@@ -137,7 +137,7 @@ class RenderNode:
         elif cmd == "sleep":
             self._sleep(bool(msg.get("poweroff", True)))
         elif cmd == "adopt":
-            self._adopt(msg.get("node"), msg.get("role", "render"), msg.get("ip"))
+            self._adopt(msg.get("node"), msg.get("role", "render"))
 
     def _ensure_media(self, name: str) -> Path:
         """Make sure the named clip is on this node; if not, pull it from the
@@ -226,13 +226,12 @@ class RenderNode:
                 next_resync = now + resync_interval
                 self.player.resync_if_needed()
 
-    def _adopt(self, node: str, role: str, ip: str):
+    def _adopt(self, node: str, role: str):
         """Adopt an identity assigned from the website: write immersive.conf on
-        the boot partition (role + node id + control host) and reboot. The IP
-        itself arrives via the control node's DHCP reservation (keyed by this
-        node's MAC), so it is recorded here only for reference."""
+        the boot partition (role + node id + control host) and reboot. The node
+        keeps its DHCP address; it becomes reachable as <node>.local via mDNS."""
         if not self.allow_poweroff:
-            print(f"[{self.node}] adopt -> {node}/{role} ip={ip} "
+            print(f"[{self.node}] adopt -> {node}/{role} "
                   f"(no-op; system writes disabled on this host)")
             return
         from pathlib import Path
@@ -241,8 +240,6 @@ class RenderNode:
         lines = [f"role={role}", f"node={node}",
                  f"control_host={self.control_host}", f"hostname={node}",
                  "allow_poweroff=true"]
-        if ip:
-            lines.append(f"ip={ip}")
         try:
             (boot / "immersive.conf").write_text("\n".join(lines) + "\n")
             print(f"[{self.node}] adopted {node}/{role}; rebooting to apply")
@@ -346,7 +343,37 @@ class RenderNode:
         threading.Thread(target=run, daemon=True).start()
 
     # ---- run -------------------------------------------------------------
+    def _advertise_mdns(self):
+        """Publish this node as an _immersive._tcp service via avahi, so it can
+        be found on the network with `avahi-browse -rt _immersive._tcp` (the
+        <node>.local A-record is advertised by avahi automatically). No effect
+        off a real node."""
+        if not self.allow_poweroff:
+            return
+        d = Path("/etc/avahi/services")
+        if not d.is_dir():
+            return
+        xml = (
+            "<?xml version=\"1.0\" standalone='no'?>\n"
+            "<!DOCTYPE service-group SYSTEM \"avahi-service.dtd\">\n"
+            "<service-group>\n"
+            "  <name replace-wildcards=\"yes\">immersive %h</name>\n"
+            "  <service>\n"
+            "    <type>_immersive._tcp</type>\n"
+            "    <port>22</port>\n"
+            f"    <txt-record>node={self.node}</txt-record>\n"
+            f"    <txt-record>mac={_node_mac()}</txt-record>\n"
+            f"    <txt-record>serial={_node_serial()}</txt-record>\n"
+            "  </service>\n"
+            "</service-group>\n")
+        try:
+            (d / "immersive.service").write_text(xml)
+            print(f"[{self.node}] advertised _immersive._tcp via mDNS")
+        except Exception as e:
+            print(f"[{self.node}] mDNS advertise failed: {e}")
+
     def run(self):
+        self._advertise_mdns()
         self.start_ws_thread()
         try:
             self.init_display()

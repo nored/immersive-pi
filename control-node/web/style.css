@@ -30,9 +30,9 @@ button.warn { background: var(--warn); border-color: var(--warn); color: #fff; }
 
 .node-row { display: flex; flex-direction: column; gap: 3px; }
 .node-admin { display: flex; gap: 4px; align-items: center; }
-.node-admin .ip { flex: 1; min-width: 0; background: #1a1f27; color: var(--ink);
-  border: 1px solid var(--line); border-radius: 4px; padding: 3px 6px; font-size: 11px;
-  font-variant-numeric: tabular-nums; }
+.node-admin .addr { flex: 1; min-width: 0; color: var(--dim); font-size: 11px;
+  font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
 .node-admin .rm { padding: 2px 8px; line-height: 1; color: #e08a6a; border-color: var(--line);
   background: #2a313b; }
 .node-admin .rm:hover { background: var(--warn); color: #fff; border-color: var(--warn); }

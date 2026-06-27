@@ -14,19 +14,23 @@ single-GPU solution is the alternative.
 - 3× SD cards, Pi OS **Bookworm** (64-bit), booted to console (no desktop —
   the render node owns DRM/KMS directly).
 
-## Network / static IP plan
+## Network — DHCP + mDNS (no static IPs)
 
-Dedicated switch, static IPs, mDNS names. Suggested:
-
-| host   | role          | IP            | mDNS         |
-|--------|---------------|---------------|--------------|
-| pi-13  | control node  | 10.0.0.13     | pi-13.local  |
-| pi-01  | render node   | 10.0.0.1      | pi-01.local  |
-| pi-02  | render node   | 10.0.0.2      | pi-02.local  |
+Nodes take the network's **DHCP** for their address and are found by **mDNS**:
+each is reachable as `<node>.local`, render nodes reach the control node by its
+`.local` name (`control_host`, default `pi-13.local`), and the whole fleet is
+browsable with `avahi-browse -rt _immersive._tcp`. There is no static-IP plan and
+no DHCP server of our own — that only works on an isolated switch you fully own
+and is disruptive on a managed network. The control plane is inbound (nodes dial
+the control node), so no node is ever addressed by IP. See `docs/ENROLLMENT.md`.
 
 Ports: WebSocket control `8765`, net clock `udp/8555`, web UI `8080`.
 Where the switch supports it, run `ptp4l` for hardware clock transport; the
 GStreamer net clock rides on top regardless.
+
+(If you *do* have a dedicated, isolated switch and prefer fixed addresses, the
+Ansible path in `provision/ansible` can assign static IPs from its inventory —
+that's an alternative, not the default.)
 
 ## Install (each Pi)
 

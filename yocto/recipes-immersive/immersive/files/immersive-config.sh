@@ -47,5 +47,5 @@ EOF
 # control node environment (token for the Node-RED power API)
 echo "IMMERSIVE_API_TOKEN=${TOKEN:-}" > /run/immersive/control.env
 
-# (Networking is configured earlier by immersive-net.service, before networkd.)
+# (Networking is plain DHCP via the shipped /etc/systemd/network/10-eth0.network.)
 echo "immersive-config: role=$ROLE node=$NODE control=$CTRL host=$HOST"

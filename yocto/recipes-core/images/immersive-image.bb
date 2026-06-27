@@ -50,7 +50,6 @@ IMAGE_INSTALL = " \
     avahi-daemon \
     avahi-utils \
     chrony \
-    dnsmasq \
     \
     immersive \
     immersive-updater \
@@ -84,16 +83,10 @@ immersive_seed_bootconf() {
     fi
 }
 
-# dnsmasq only runs on the control node — the role dispatcher starts it. Drop its
-# boot auto-start (but leave it startable, so render nodes don't run a DHCP server).
-disable_dnsmasq_autostart() {
-    rm -f ${IMAGE_ROOTFS}${sysconfdir}/systemd/system/multi-user.target.wants/dnsmasq.service 2>/dev/null || true
-}
-ROOTFS_POSTPROCESS_COMMAND += "disable_dnsmasq_autostart;"
-
 # Wired network stack: systemd-networkd + systemd-resolved enabled at boot. No
-# NetworkManager, no connman (excluded in local.conf). networkd reads the config
-# in /etc/systemd/network/ that immersive-net.service writes per role.
+# NetworkManager, no connman (excluded in local.conf). networkd reads the DHCP
+# config in /etc/systemd/network/ shipped by the immersive package (all nodes
+# DHCP; addresses from the site network, discovery via mDNS).
 enable_systemd_network() {
     install -d ${IMAGE_ROOTFS}${sysconfdir}/systemd/system/multi-user.target.wants \
               ${IMAGE_ROOTFS}${sysconfdir}/systemd/system/sockets.target.wants \

@@ -133,10 +133,10 @@ class RoomModel:
 
     def set_node_net(self, node: str, ip: str = None, mac: str = None,
                      projector: str = None) -> dict:
-        """Per-node network identity managed from the website (id ↔ ip ↔ mac).
-        The IP is the address the node should run at; how it is applied (DHCP
-        reservation on the control node, or static config) is the enrollment
-        layer's job — this is the source of truth it reads."""
+        """Per-node identity stored from the website. The MAC is kept only to
+        identify the physical Pi during enrollment; addressing is the network's
+        DHCP and discovery is mDNS (<node>.local), so no IP is assigned here.
+        `ip` is accepted but unused (informational)."""
         with self._lock:
             entry = self.ensure_node(node)
             net = entry.setdefault("net", {})

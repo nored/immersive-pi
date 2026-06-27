@@ -11,9 +11,7 @@ SRC_URI = " \
     file://app/ \
     file://immersive-role.sh \
     file://immersive-config.sh \
-    file://immersive-net.sh \
     file://immersive-role.service \
-    file://immersive-net.service \
     file://immersive-render.service \
     file://immersive-control.service \
     file://immersive-clock.service \
@@ -26,9 +24,9 @@ S = "${WORKDIR}"
 
 inherit systemd
 
-# The early net service configures eth0 before networkd; the role dispatcher
-# then starts render OR control services based on immersive.conf.
-SYSTEMD_SERVICE:${PN} = "immersive-net.service immersive-role.service"
+# Only the role dispatcher is auto-enabled; it starts render OR control services
+# based on immersive.conf. Networking is plain DHCP (shipped eth0 config).
+SYSTEMD_SERVICE:${PN} = "immersive-role.service"
 SYSTEMD_AUTO_ENABLE = "enable"
 
 RDEPENDS:${PN} = " \
@@ -48,11 +46,9 @@ do_install() {
     install -d ${D}${bindir}
     install -m 0755 ${WORKDIR}/immersive-role.sh    ${D}${bindir}/immersive-role.sh
     install -m 0755 ${WORKDIR}/immersive-config.sh  ${D}${bindir}/immersive-config.sh
-    install -m 0755 ${WORKDIR}/immersive-net.sh     ${D}${bindir}/immersive-net.sh
 
     install -d ${D}${systemd_system_unitdir}
     install -m 0644 ${WORKDIR}/immersive-role.service    ${D}${systemd_system_unitdir}/
-    install -m 0644 ${WORKDIR}/immersive-net.service     ${D}${systemd_system_unitdir}/
     install -m 0644 ${WORKDIR}/immersive-render.service  ${D}${systemd_system_unitdir}/
     install -m 0644 ${WORKDIR}/immersive-control.service ${D}${systemd_system_unitdir}/
     install -m 0644 ${WORKDIR}/immersive-clock.service   ${D}${systemd_system_unitdir}/

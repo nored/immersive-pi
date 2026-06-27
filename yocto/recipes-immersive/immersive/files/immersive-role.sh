@@ -11,7 +11,6 @@ echo "immersive-role: starting role '$ROLE'"
 
 case "$ROLE" in
     control)
-        systemctl start dnsmasq 2>/dev/null || true   # DHCP server + reservations
         systemctl start immersive-clock.service
         systemctl start immersive-control.service
         ;;

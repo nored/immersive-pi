@@ -7,14 +7,11 @@
 # role of this node: render (one projector) or control (Pi 13).
 role=render
 
-# this node's id and the control node to reach.
+# this node's id and the control node to reach (an mDNS .local name).
+# Every node takes the network's DHCP for its address and is reachable as
+# <hostname>.local via mDNS — no static IPs, no DHCP server of our own.
 node=pi-01
 control_host=pi-13.local
-
-# control node only: its own static IP (it is the DHCP server + gateway).
-# render nodes leave this unset and receive their IP by DHCP reservation,
-# assigned from the calibration website (keyed by MAC).
-control_ip=10.0.0.13
 
 # hostname -> mDNS <hostname>.local
 hostname=pi-01

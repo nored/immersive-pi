@@ -1,69 +1,53 @@
-# ENROLLMENT — add nodes and assign IPs from the website
+# ENROLLMENT — add nodes from the website (DHCP + mDNS)
 
-Adding a node and giving it an address is done entirely from the calibration
-website. No SSH, no editing the image. The control node is the DHCP server for
-the dedicated switch; the website is its front end.
+Adding a node is done from the calibration website. No static IPs, and the
+control node is **not** a DHCP server — that only works on an isolated network
+you own, and is disruptive on a managed/venue network. Instead:
 
-## Network stack
+- **Every node takes the network's own DHCP** for its address.
+- **Nodes are found by mDNS** (`<node>.local`, advertised by avahi). Render nodes
+  reach the control node by its `.local` name (`control_host`, default
+  `pi-13.local`); the control plane is inbound, so the control node never needs
+  to dial a node by IP.
+- Each node also advertises an `_immersive._tcp` service, so the whole fleet is
+  discoverable with `avahi-browse -rt _immersive._tcp` (TXT records carry node
+  id, MAC, serial).
 
-Wired only, **systemd-networkd + systemd-resolved** — no NetworkManager, no
-connman (both are hard-excluded from the image). `immersive-net.service` writes
-`/etc/systemd/network/10-eth0.network` before networkd starts: a static address
-for the control node, DHCP for render nodes. (yBrowser used iwd because it is a
-WiFi device; this cluster is wired, so there is no iwd.)
-
-## How addressing works
-
-- The **control node** has a static IP (its `control_ip`, default `10.0.0.13`)
-  and runs `dnsmasq` as the DHCP server + gateway for the switch.
-- **Render nodes take DHCP.** Until enrolled, a node gets a temporary lease from
-  a small dynamic pool (`10.0.0.200–250`). Once enrolled it has a **reservation**
-  (its MAC → the IP you assigned) and always comes up at that address.
-- The reservations are generated from the git-versioned room-model (`net.mac` /
-  `net.ip` per node) by `netmanager.py` and written to
-  `/etc/dnsmasq.d/immersive.conf`, then dnsmasq is reloaded. Setting an IP on the
-  page therefore takes effect on the next lease — no per-node static config.
-
-The network parameters live in the room-model `network` block (iface, subnet,
-gateway, dns, pool range, lease) and are editable like everything else.
+The network stack is **systemd-networkd + systemd-resolved + avahi** — no
+NetworkManager, no DHCP server of our own.
 
 ## Enrolling a fresh Pi
 
-1. Flash the image and boot the Pi on the switch with no identity (or a
-   provisional one). It DHCPs an address from the pool and connects to the
-   control node, announcing its **MAC + serial**.
+1. Flash the image and boot the Pi on the network. It gets an address from the
+   site's DHCP and finds the control node by mDNS (`control_host`), then connects
+   and announces its **MAC + serial**.
 2. It appears on the website under **Pending enrollment** (a highlighted panel in
    the node sidebar) showing its MAC and serial.
-3. Click **Assign**: give it a node id (a `pi-NN` is suggested), a role
-   (render / control), and an IP. The control node:
-   - writes the node's entry to the room-model with its MAC and IP,
-   - writes the `MAC → IP` reservation and reloads dnsmasq,
-   - tells the Pi to **adopt** that identity — it writes `immersive.conf` on its
-     boot partition and reboots.
-4. The Pi comes back up as the assigned node, at its reserved IP, in the right
-   role, and joins the running room automatically.
+3. Click **Assign**: give it a node id (`pi-NN` suggested) and a role
+   (render / control). The control node records the entry (with the MAC for
+   identification) and tells the Pi to **adopt** the identity.
+4. The Pi writes `immersive.conf` (role + id + hostname), reboots, comes back as
+   `<node>.local`, and rejoins the running room. Its address is whatever DHCP
+   gives it — you never assign one.
 
-## Changing a node's IP later
+No IP is ever entered. To reach a node for maintenance, use `<node>.local`
+(e.g. `ssh root@pi-07.local`).
 
-In the node list, edit the **IP** field. The control node rewrites the
-reservation and reloads dnsmasq immediately; the node picks up the new address on
-its next DHCP renewal (or reboot). Removing a node drops its reservation.
-
-## Verifying off-hardware
-
-The logic runs and self-tests without dnsmasq or Pis:
+## Listing the fleet over mDNS
 
 ```bash
-python3 control-node/netmanager.py control-node/room-model.json   # print the dnsmasq fragment
+avahi-browse -rt _immersive._tcp      # every node, with node id / mac / serial
+ssh root@pi-07.local                  # reach a node by name
 ```
 
-The reservation generation and the full pending → enroll → reservation + adopt
-flow are covered by the in-repo tests (a connected-but-unknown node is detected,
-assigning it writes the MAC→IP reservation and pushes the adopt command).
+## Removing / renaming
 
-## What each role needs
+Remove a node from the node list (×) to drop it from the room-model. Re-running
+enrollment on a connected node reassigns its id/role. None of this touches
+addressing — that stays with the network's DHCP.
 
-- **Control node:** static `control_ip`, `dnsmasq` (shipped in the image, started
-  only for the control role), and the controller, which owns the reservations.
-- **Render nodes:** nothing — DHCP client by default; identity and address both
-  arrive from the control node.
+## Verified off-hardware
+
+The pending → enroll → adopt flow is covered by the in-repo tests: a
+connected-but-unknown node is detected as pending, and assigning it records the
+entry (id + role + MAC) and pushes the adopt command — no IP, no DHCP server.
