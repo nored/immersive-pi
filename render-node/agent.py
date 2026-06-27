@@ -55,6 +55,7 @@ class RenderNode:
         self.node = cfg["node"]
         self.control_host = cfg["control_host"]
         self.ws_url = f"ws://{cfg['control_host']}:{cfg['control_ws_port']}"
+        self.control_http_port = cfg.get("control_http_port", 8080)
         self.media_dir = Path(cfg.get("media_dir", "."))
         pv = cfg.get("preview", {})
         self.pv_w = pv.get("width", 320)
@@ -111,7 +112,7 @@ class RenderNode:
         elif cmd == "identify":
             self._identify_until = time.monotonic() + msg.get("ms", 2000) / 1000.0
         elif cmd == "prepare":
-            media = self.media_dir / msg.get("slice", "pan.mp4")
+            media = self._ensure_media(msg.get("slice", "test.mp4"))
             loop = self.cfg.get("loop", True)
             self.player.prepare(str(media), loop=loop)
             self.player.slave_to_clock(self.control_host, self._clock_port)
@@ -135,6 +136,25 @@ class RenderNode:
                 self._scan_key = None
         elif cmd == "sleep":
             self._sleep(bool(msg.get("poweroff", True)))
+
+    def _ensure_media(self, name: str) -> Path:
+        """Make sure the named clip is on this node; if not, pull it from the
+        control node's /media/ endpoint. Lets an operator upload once on the
+        website and have every node fetch it — no per-node copying."""
+        path = self.media_dir / name
+        if path.exists():
+            return path
+        self.media_dir.mkdir(parents=True, exist_ok=True)
+        url = f"http://{self.control_host}:{self.control_http_port}/media/{name}"
+        try:
+            import urllib.request
+            tmp = path.with_suffix(path.suffix + ".part")
+            urllib.request.urlretrieve(url, tmp)
+            tmp.replace(path)
+            print(f"[{self.node}] fetched {name} from control node")
+        except Exception as e:
+            print(f"[{self.node}] could not fetch {name} ({e})")
+        return path
 
     def _merge_entry(self, field: str, value):
         if self._entry is None:

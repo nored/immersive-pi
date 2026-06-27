@@ -10,10 +10,16 @@
 <header id="topbar">
   <div class="brand">immersive-pi</div>
   <div class="show-controls">
-    <button data-show="prepare">Load</button>
+    <select id="media-select" title="Video to play"></select>
+    <label class="upload-btn" title="Upload a video">＋video
+      <input type="file" id="upload-input" accept="video/mp4,video/quicktime,video/x-matroska,.mp4,.mov,.mkv,.h264" hidden />
+    </label>
     <button data-show="play" class="go">Play</button>
     <button data-show="stop">Stop</button>
     <button data-show="blackout" class="warn">Blackout</button>
+    <span class="sep"></span>
+    <button data-show="wake" title="Wake the room">Wake</button>
+    <button data-show="hibernate" class="warn" title="Sleep the room (power down)">Sleep</button>
   </div>
   <div class="calib-order" title="In-room calibration order">
     <span data-step="geometry" class="active">1 · geometry</span>
@@ -34,6 +40,7 @@
   <aside id="grid">
     <h2>Nodes</h2>
     <div id="thumbs"></div>
+    <button id="add-node" title="Add a node to the room">＋ add node</button>
     <button id="swap" class="warn" title="Recalibrate one swapped projector; the other entries never change">Beamer swap…</button>
   </aside>
 

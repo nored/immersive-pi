@@ -10,3 +10,7 @@ __pycache__/
 venv/
 # scratch
 *.log
+
+# bundled media: keep the test clip, ignore uploads
+control-node/media/*
+!control-node/media/test.mp4

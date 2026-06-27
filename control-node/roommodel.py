@@ -122,6 +122,32 @@ class RoomModel:
             self.model.setdefault("nodes", []).append(entry)
             return entry
 
+    def remove_node(self, node: str) -> bool:
+        with self._lock:
+            nodes = self.model.get("nodes", [])
+            for i, n in enumerate(nodes):
+                if n["node"] == node:
+                    del nodes[i]
+                    return True
+        return False
+
+    def set_node_net(self, node: str, ip: str = None, mac: str = None,
+                     projector: str = None) -> dict:
+        """Per-node network identity managed from the website (id ↔ ip ↔ mac).
+        The IP is the address the node should run at; how it is applied (DHCP
+        reservation on the control node, or static config) is the enrollment
+        layer's job — this is the source of truth it reads."""
+        with self._lock:
+            entry = self.ensure_node(node)
+            net = entry.setdefault("net", {})
+            if ip is not None:
+                net["ip"] = ip
+            if mac is not None:
+                net["mac"] = mac
+            if projector is not None:
+                entry["projector"] = projector
+            return copy.deepcopy(entry)
+
     # ---- mutations (used by the calibration website) ---------------------
     def update_field(self, node: str, field: str, value: Any) -> Optional[dict]:
         """Replace one of mesh/blend/color/source_region on a node entry."""

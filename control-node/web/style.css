@@ -21,6 +21,22 @@ button:hover { border-color: #46505d; }
 button.active { background: var(--sel); border-color: var(--sel); color: #fff; }
 button.go { background: var(--go); border-color: var(--go); color: #fff; }
 button.warn { background: var(--warn); border-color: var(--warn); color: #fff; }
+#media-select { background: #2a313b; color: var(--ink); border: 1px solid var(--line);
+  border-radius: 5px; padding: 6px 8px; font-size: 13px; max-width: 220px; }
+.show-controls .sep { width: 1px; height: 22px; background: var(--line); margin: 0 4px; }
+.upload-btn { background: #2a313b; color: var(--ink); border: 1px solid var(--line);
+  border-radius: 5px; padding: 6px 10px; font-size: 13px; cursor: pointer; }
+.upload-btn:hover { border-color: #46505d; }
+
+.node-row { display: flex; flex-direction: column; gap: 3px; }
+.node-admin { display: flex; gap: 4px; align-items: center; }
+.node-admin .ip { flex: 1; min-width: 0; background: #1a1f27; color: var(--ink);
+  border: 1px solid var(--line); border-radius: 4px; padding: 3px 6px; font-size: 11px;
+  font-variant-numeric: tabular-nums; }
+.node-admin .rm { padding: 2px 8px; line-height: 1; color: #e08a6a; border-color: var(--line);
+  background: #2a313b; }
+.node-admin .rm:hover { background: var(--warn); color: #fff; border-color: var(--warn); }
+#add-node { width: 100%; margin-top: 10px; }
 
 #version { color: var(--dim); font-variant-numeric: tabular-nums; }
 .fleet-link { color: var(--sel); text-decoration: none; font-size: 13px; padding: 4px 8px; }

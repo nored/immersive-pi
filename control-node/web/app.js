@@ -43,7 +43,17 @@ function onMessage(m) {
     state.heartbeats = m.heartbeats || {};
     state.nodesUp = m.nodes_up || [];
     setVersion(state.room.version);
+    populateMedia(m.playlist);
     if (!state.sel && state.room.nodes.length) selectNode(state.room.nodes[0].node);
+    renderThumbs();
+    if (state.sel) renderEditor();
+  } else if (m.type === "playlist") {
+    populateMedia(m.playlist);
+  } else if (m.type === "room") {
+    state.room = m.room || state.room;
+    state.nodesUp = m.nodes_up || state.nodesUp;
+    populateMedia(m.playlist);
+    if (state.sel && !entryFor(state.sel)) state.sel = null;
     renderThumbs();
     if (state.sel) renderEditor();
   } else if (m.type === "entry") {
@@ -73,6 +83,9 @@ function renderThumbs() {
   const wrap = document.getElementById("thumbs");
   wrap.innerHTML = "";
   for (const n of state.room.nodes) {
+    const row = document.createElement("div");
+    row.className = "node-row";
+
     const d = document.createElement("div");
     d.className = "thumb" + (n.node === state.sel ? " sel" : "");
     d.dataset.node = n.node;
@@ -82,7 +95,25 @@ function renderThumbs() {
       `<span class="dot" id="dot-${n.node}"></span>`;
     d.onclick = () => selectNode(n.node);
     if (state.previews[n.node]) d.querySelector("img").src = state.previews[n.node];
-    wrap.appendChild(d);
+
+    const admin = document.createElement("div");
+    admin.className = "node-admin";
+    const ipi = document.createElement("input");
+    ipi.className = "ip"; ipi.placeholder = "ip address";
+    ipi.value = (n.net && n.net.ip) || "";
+    ipi.title = "node IP (saved to the room-model)";
+    ipi.onchange = () =>
+      send({ cmd: "set_node_net", node: n.node, ip: ipi.value.trim() });
+    const rm = document.createElement("button");
+    rm.className = "rm"; rm.textContent = "×"; rm.title = "remove node";
+    rm.onclick = () => {
+      if (confirm(`Remove ${n.node} from the room?`))
+        send({ cmd: "remove_node", node: n.node });
+    };
+    admin.append(ipi, rm);
+
+    row.append(d, admin);
+    wrap.appendChild(row);
   }
   renderThumbDots();
 }
@@ -271,7 +302,8 @@ function wireToolbar() {
     btn.onclick = () => {
       const a = btn.dataset.show;
       if (a === "blackout") send({ cmd: "blackout", on: true });
-      else send({ cmd: a });
+      else if (a === "play") send({ cmd: "play_media", media: selectedMedia() });
+      else send({ cmd: a });   // stop, wake, hibernate
     };
   });
   document.getElementById("save").onclick = () =>
@@ -312,6 +344,32 @@ function wireToolbar() {
   });
 
   document.getElementById("swap").onclick = beamerSwap;
+
+  document.getElementById("add-node").onclick = () => {
+    const id = prompt("New node id (e.g. pi-13):");
+    if (!id) return;
+    const ip = prompt(`IP address for ${id.trim()} (optional):`, "") || "";
+    send({ cmd: "add_node", node: id.trim(), ip: ip.trim() });
+  };
+
+  const up = document.getElementById("upload-input");
+  up.onchange = async () => {
+    const f = up.files[0];
+    if (!f) return;
+    flash(`uploading ${f.name}…`);
+    try {
+      const r = await fetch(`/api/upload?name=${encodeURIComponent(f.name)}`,
+                            { method: "POST", body: f });
+      const j = await r.json();
+      if (j.error) alert("upload failed: " + j.error);
+      else {
+        flash(`uploaded ${j.uploaded}`);
+        if (j.playlist) populateMedia(j.playlist);
+        document.getElementById("media-select").value = j.uploaded;
+      }
+    } catch (e) { alert("upload failed: " + e); }
+    up.value = "";
+  };
 }
 
 function beamerSwap() {
@@ -342,6 +400,29 @@ function setConn(up) {
   el.textContent = up ? "online" : "offline";
 }
 function setVersion(v) { document.getElementById("version").textContent = `v${v ?? "—"}`; }
+
+function selectedMedia() {
+  const sel = document.getElementById("media-select");
+  return sel ? sel.value : "";
+}
+function populateMedia(pl) {
+  if (!pl) return;
+  const sel = document.getElementById("media-select");
+  if (!sel) return;
+  const keep = sel.value;
+  sel.innerHTML = "";
+  const vids = pl.videos || [];
+  if (!vids.length) {
+    const o = document.createElement("option");
+    o.value = ""; o.textContent = "(no videos)"; sel.appendChild(o);
+    return;
+  }
+  for (const v of vids) {
+    const o = document.createElement("option");
+    o.value = v; o.textContent = v; sel.appendChild(o);
+  }
+  sel.value = keep && vids.includes(keep) ? keep : (pl.current || vids[0]);
+}
 function renderHB() {
   const hb = state.heartbeats[state.sel];
   document.getElementById("hb").textContent = hb ? JSON.stringify(hb, null, 1) : "—";

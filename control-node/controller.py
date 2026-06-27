@@ -46,6 +46,33 @@ WEB_DIR = Path(__file__).with_name("web")
 LEAD_NS = 300_000_000  # 300 ms arm lead for play_at
 
 
+TEST_VIDEO = "test.mp4"
+
+
+def ensure_test_video(media_dir: Path):
+    """Guarantee a built-in test clip is always available to play, even before
+    anyone uploads anything. Ships in the repo/image; regenerated with ffmpeg if
+    somehow missing."""
+    dst = media_dir / TEST_VIDEO
+    if dst.exists():
+        return
+    import shutil, subprocess
+    # if the repo's test-media has a pan clip, reuse it; else synthesize one
+    repo_clip = Path(__file__).resolve().parent.parent / "test-media" / "pan.mp4"
+    if repo_clip.exists():
+        shutil.copy(repo_clip, dst)
+        return
+    if shutil.which("ffmpeg"):
+        try:
+            subprocess.run(
+                ["ffmpeg", "-y", "-f", "lavfi",
+                 "-i", "testsrc=size=1280x720:rate=30:duration=10",
+                 "-c:v", "libx264", "-pix_fmt", "yuv420p", str(dst)],
+                check=True, capture_output=True, timeout=120)
+        except Exception as e:
+            print(f"[ctl] could not generate test video: {e}")
+
+
 def now_ns() -> int:
     """'Now' on the master media clock, in nanoseconds."""
     try:
@@ -70,7 +97,9 @@ class Controller:
         self.clock_port = clock_port
         self.http_port = http_port
         self.media_dir = Path(media_dir) if media_dir else \
-            Path(__file__).resolve().parent.parent / "test-media"
+            Path(__file__).resolve().parent / "media"
+        self.media_dir.mkdir(parents=True, exist_ok=True)
+        ensure_test_video(self.media_dir)
 
         self.nodes: dict[str, websockets.WebSocketServerProtocol] = {}
         self.webs: set[websockets.WebSocketServerProtocol] = set()
@@ -138,7 +167,9 @@ class Controller:
                               "room": self.room.model,
                               "show": self.show,
                               "heartbeats": self.heartbeats,
-                              "nodes_up": list(self.nodes.keys())})
+                              "nodes_up": list(self.nodes.keys()),
+                              "playlist": self.playlist(),
+                              "power_state": self.power_state})
         try:
             async for raw in ws:
                 await self._on_web_msg(raw)
@@ -197,6 +228,26 @@ class Controller:
             await self._send_node(msg["node"], {
                 "cmd": "scan_show", "axis": msg.get("axis"), "bit": msg.get("bit"),
                 "inverted": msg.get("inverted", False), "on": msg.get("on", True)})
+        elif cmd == "play_media":
+            await self.cmd_play_media(msg.get("media"))
+        elif cmd == "list_media":
+            await self._broadcast_web({"type": "playlist", "playlist": self.playlist()})
+        elif cmd == "add_node":
+            self.room.ensure_node(msg["node"], msg.get("projector", ""))
+            if msg.get("ip") or msg.get("mac"):
+                self.room.set_node_net(msg["node"], msg.get("ip"), msg.get("mac"))
+            self.room.save(f"add node {msg['node']}")
+            await self._push_entry(msg["node"])
+            await self._broadcast_room()
+        elif cmd == "remove_node":
+            if self.room.remove_node(msg["node"]):
+                self.room.save(f"remove node {msg['node']}")
+                await self._broadcast_room()
+        elif cmd == "set_node_net":
+            self.room.set_node_net(msg["node"], msg.get("ip"), msg.get("mac"),
+                                   msg.get("projector"))
+            self.room.save(f"set net {msg['node']}")
+            await self._broadcast_room()
         elif cmd == "hibernate":
             await self.cmd_hibernate()
         elif cmd == "wake":
@@ -371,6 +422,13 @@ class Controller:
             except ConnClosed:
                 pass
 
+    async def _broadcast_room(self):
+        """Push the full model + playlist after a roster/network change so every
+        open tablet re-renders the node list."""
+        await self._broadcast_web({"type": "room", "room": self.room.model,
+                                   "nodes_up": list(self.nodes.keys()),
+                                   "playlist": self.playlist()})
+
     async def _broadcast_web(self, obj: dict):
         data = json.dumps(obj)
         for ws in list(self.webs):
@@ -483,10 +541,14 @@ class _ApiHandler(SimpleHTTPRequestHandler):
     def do_POST(self):
         if not self.path.startswith("/api/"):
             self.send_error(404); return
-        if not self._authed():
-            self._json(401, {"error": "unauthorized"}); return
         path = self.path.split("?", 1)[0]
         c = self.controller
+        # Upload is the one POST the browser UI makes; it can't carry the token,
+        # and the WebSocket control plane on the trusted net is already open.
+        if path == "/api/upload":
+            self._upload(); return
+        if not self._authed():
+            self._json(401, {"error": "unauthorized"}); return
         if path == "/api/hibernate":
             self._json(200, self._call(c.cmd_hibernate()))
         elif path == "/api/wake":
@@ -499,8 +561,49 @@ class _ApiHandler(SimpleHTTPRequestHandler):
         else:
             self._json(404, {"error": "unknown endpoint"})
 
+    def _upload(self):
+        """POST /api/upload?name=<file> with the video as the raw body."""
+        import os, re
+        from urllib.parse import urlparse, parse_qs, unquote
+        c = self.controller
+        name = os.path.basename(unquote(parse_qs(urlparse(self.path).query)
+                                        .get("name", [""])[0]))
+        if not re.match(r'^[\w.\- ]+\.(mp4|mov|mkv|h264)$', name, re.I):
+            self._json(400, {"error": "filename must be a video (mp4/mov/mkv/h264)"})
+            return
+        n = int(self.headers.get("Content-Length", 0) or 0)
+        if n <= 0:
+            self._json(400, {"error": "empty upload"}); return
+        dst = c.media_dir / name
+        with open(dst, "wb") as f:
+            left = n
+            while left:
+                chunk = self.rfile.read(min(left, 1 << 20))
+                if not chunk:
+                    break
+                f.write(chunk); left -= len(chunk)
+        print(f"[ctl] uploaded {name} ({n} bytes)")
+        asyncio.run_coroutine_threadsafe(
+            c._broadcast_web({"type": "playlist", "playlist": c.playlist()}), c._loop)
+        self._json(200, {"uploaded": name, "playlist": c.playlist()})
+
+    def _serve_media(self, name: str):
+        import os, shutil
+        from urllib.parse import unquote
+        f = self.controller.media_dir / os.path.basename(unquote(name))
+        if not f.exists():
+            self.send_error(404); return
+        self.send_response(200)
+        self.send_header("Content-Type", "video/mp4")
+        self.send_header("Content-Length", str(f.stat().st_size))
+        self.end_headers()
+        with open(f, "rb") as fh:
+            shutil.copyfileobj(fh, self.wfile)
+
     def do_GET(self):
         path = self.path.split("?", 1)[0]
+        if path.startswith("/media/"):
+            self._serve_media(path[len("/media/"):]); return
         if path in ("/api/power", "/api/playlist", "/api/show"):
             if not self._authed():
                 self._json(401, {"error": "unauthorized"}); return
