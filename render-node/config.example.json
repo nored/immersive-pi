@@ -2,6 +2,8 @@
   "node": "pi-01",
   "control_host": "pi-13.local",
   "control_ws_port": 8765,
+  "control_http_port": 8080,
+  "admin_port": 8080,
   "clock_port": 8555,
   "media_dir": "/opt/immersive/media",
   "drm": {

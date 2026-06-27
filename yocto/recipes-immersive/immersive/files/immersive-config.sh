@@ -34,6 +34,8 @@ cat > /run/immersive/config.json <<EOF
   "node": "$NODE",
   "control_host": "$CTRL",
   "control_ws_port": 8765,
+  "control_http_port": 8080,
+  "admin_port": 8080,
   "clock_port": 8555,
   "media_dir": "/opt/immersive/media",
   "drm": { "device": "/dev/dri/card0", "connector": "auto" },

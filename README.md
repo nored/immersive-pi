@@ -24,7 +24,8 @@ without touching the other nodes.
 - **Structured-light auto-calibration** — a gray-code scan from one camera solves
   the meshes and blend masks.
 - **Operations** — heartbeat dashboard (drift / stall / thermal); nodes keep
-  looping if the control node restarts; add / enrol nodes from the website.
+  looping if the control node restarts; discover / register / enrol nodes from the
+  website; per-node admin page (health + reconfigure + reboot) with a login.
 - **Sleep / wake** — an HTTP endpoint (e.g. for Node-RED) powers the display down
   and back up via a pluggable backend (PoE / PDU / GPIO).
 - **Appliance image** — a Yocto build with A/B partitions and OTA updates; one
