@@ -30,6 +30,7 @@ from pathlib import Path
 
 from player import Player
 from gl_pipeline import GLStage, KmsDisplay
+import nodeadmin
 
 try:
     import websockets
@@ -79,7 +80,11 @@ class RenderNode:
         self._identify_until = 0.0
         self._identify_prev = ("video", False)
         self._running = True
+        self._ws_connected = False
+        self._fps = 0.0
+        self._frame_count = 0
         self._clock_port = cfg.get("clock_port", 8555)
+        self.admin_port = cfg.get("admin_port", 8080)
 
     # ---- display bring-up ------------------------------------------------
     def init_display(self):
@@ -214,6 +219,7 @@ class RenderNode:
             else:
                 self.stage.render_screen()
             self.display.swap_and_flip()
+            self._frame_count += 1
 
             now = time.monotonic()
             if now >= next_pv:
@@ -294,6 +300,12 @@ class RenderNode:
             pass
 
     def _emit_heartbeat(self):
+        now = time.monotonic()
+        dt = now - getattr(self, "_hb_t", now)
+        if dt > 0:
+            self._fps = (self._frame_count - getattr(self, "_hb_frames", 0)) / dt
+        self._hb_t = now
+        self._hb_frames = self._frame_count
         hb = {
             "node": self.node,
             "clock_offset_ns": self.player.clock_offset_ns(),
@@ -315,6 +327,7 @@ class RenderNode:
                 async with websockets.connect(self.ws_url, max_size=4 * 1024 * 1024) as ws:
                     await ws.send(json.dumps({"role": "node", "hello": self.node,
                                               "mac": _node_mac(), "serial": _node_serial()}))
+                    self._ws_connected = True
                     print(f"[{self.node}] connected to {self.ws_url}")
                     recv = asyncio.create_task(self._ws_recv(ws))
                     send = asyncio.create_task(self._ws_send(ws))
@@ -322,7 +335,8 @@ class RenderNode:
                     recv.cancel(); send.cancel()
             except Exception as e:
                 print(f"[{self.node}] ws down ({e}); retry in 2s (still rendering)")
-                await asyncio.sleep(2)
+            self._ws_connected = False
+            await asyncio.sleep(2)
 
     async def _ws_recv(self, ws):
         async for raw in ws:
@@ -372,8 +386,32 @@ class RenderNode:
         except Exception as e:
             print(f"[{self.node}] mDNS advertise failed: {e}")
 
+    def _health(self) -> dict:
+        up = 0.0
+        try:
+            up = float(open("/proc/uptime").read().split()[0])
+        except Exception:
+            pass
+        return {
+            "node": self.node, "role": "render", "hostname": _hostname(),
+            "version": _version(), "uptime_s": int(up),
+            "temp_c": _soc_temp_c(), "ip": _node_ip(), "mac": _node_mac(),
+            "control_host": self.control_host, "connected": self._ws_connected,
+            "decoder_ok": self.player.decoder_ok(), "fb_ok": self.stage is not None,
+            "clock_offset_ms": round(self.player.clock_offset_ns() / 1e6, 3),
+            "media_pos_s": round(self.player.media_pos_ns() / 1e9, 2),
+            "fps": round(self._fps, 1),
+        }
+
     def run(self):
         self._advertise_mdns()
+        try:
+            nodeadmin.make_admin_server(self.admin_port,
+                                        nodeadmin.admin_password(self.node),
+                                        self._health, allow_reboot=self.allow_poweroff)
+            print(f"[{self.node}] admin web on :{self.admin_port}/admin")
+        except Exception as e:
+            print(f"[{self.node}] admin web unavailable: {e}")
         self.start_ws_thread()
         try:
             self.init_display()
@@ -389,6 +427,30 @@ class RenderNode:
             self.player.stop()
             if self.display:
                 self.display.teardown()
+
+
+def _hostname() -> str:
+    import socket
+    return socket.gethostname()
+
+
+def _version() -> str:
+    try:
+        return open("/etc/immersive-version").read().strip()
+    except Exception:
+        return "dev"
+
+
+def _node_ip() -> str:
+    import socket
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("192.0.2.1", 9))   # TEST-NET addr; no packets sent
+        return s.getsockname()[0]
+    except Exception:
+        return ""
+    finally:
+        s.close()
 
 
 def _node_mac() -> str:

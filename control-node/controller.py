@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Optional
 
 import powerctl
+import nodeadmin
 
 try:
     import websockets
@@ -71,6 +72,13 @@ def ensure_test_video(media_dir: Path):
                 check=True, capture_output=True, timeout=120)
         except Exception as e:
             print(f"[ctl] could not generate test video: {e}")
+
+
+def _read_version() -> str:
+    try:
+        return open("/etc/immersive-version").read().strip()
+    except Exception:
+        return "dev"
 
 
 def now_ns() -> int:
@@ -118,7 +126,24 @@ class Controller:
         self.power_state = "awake"          # awake | hibernating
         self._was_playing = False
         self.api_token = os.environ.get("IMMERSIVE_API_TOKEN", "")
+        import socket
+        self.admin_password = nodeadmin.admin_password(socket.gethostname())
+        self._started = __import__("time").monotonic()
         self._loop: Optional[asyncio.AbstractEventLoop] = None
+
+    def admin_health(self) -> dict:
+        import socket, time
+        up = 0.0
+        try:
+            up = float(open("/proc/uptime").read().split()[0])
+        except Exception:
+            pass
+        return {
+            "node": socket.gethostname(), "role": "control",
+            "version": _read_version(), "uptime_s": int(up),
+            "nodes_up": len(self.nodes), "playing": self.show.get("playing"),
+            "media": self.show.get("media"), "power_state": self.power_state,
+        }
 
     # ---- client lifecycle ------------------------------------------------
     async def handler(self, ws):
@@ -677,6 +702,23 @@ class _ApiHandler(SimpleHTTPRequestHandler):
         # and the WebSocket control plane on the trusted net is already open.
         if path == "/api/upload":
             self._upload(); return
+        # admin routes use Basic auth (not the token), same as every node
+        if path == "/api/config":
+            if self._basic_ok():
+                n = int(self.headers.get("Content-Length", 0) or 0)
+                try:
+                    body = json.loads(self.rfile.read(n) or b"{}")
+                except Exception:
+                    self._json(400, {"error": "bad json"}); return
+                self._json(200, {"saved": True,
+                                 "config": nodeadmin.write_bootconfig(body.get("config", {}))})
+            return
+        if path == "/api/reboot":
+            if self._basic_ok():
+                self._json(200, {"rebooting": True})
+                import subprocess
+                subprocess.Popen(["systemctl", "reboot"])
+            return
         if not self._authed():
             self._json(401, {"error": "unauthorized"}); return
         if path == "/api/hibernate":
@@ -730,8 +772,41 @@ class _ApiHandler(SimpleHTTPRequestHandler):
         with open(f, "rb") as fh:
             shutil.copyfileobj(fh, self.wfile)
 
+    # ---- per-node admin (Basic auth, same page every node serves) --------
+    def _basic_ok(self) -> bool:
+        if nodeadmin.check_auth(self.headers.get("Authorization"),
+                                self.controller.admin_password):
+            return True
+        self.send_response(401)
+        self.send_header("WWW-Authenticate", 'Basic realm="immersive"')
+        self.end_headers()
+        return False
+
+    def _admin_get(self, path) -> bool:
+        if path in ("/admin", "/admin/"):
+            if not self._basic_ok():
+                return True
+            body = nodeadmin.ADMIN_HTML.encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers(); self.wfile.write(body)
+            return True
+        if path == "/api/health":
+            if self._basic_ok():
+                self._json(200, self.controller.admin_health())
+            return True
+        if path == "/api/config":
+            if self._basic_ok():
+                self._json(200, {"config": nodeadmin.read_bootconfig(),
+                                 "editable": nodeadmin.EDITABLE})
+            return True
+        return False
+
     def do_GET(self):
         path = self.path.split("?", 1)[0]
+        if self._admin_get(path):
+            return
         if path.startswith("/media/"):
             self._serve_media(path[len("/media/"):]); return
         if path in ("/api/power", "/api/playlist", "/api/videos", "/api/show"):

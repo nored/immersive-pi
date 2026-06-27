@@ -16,6 +16,10 @@ control_host=pi-13.local
 # hostname -> mDNS <hostname>.local
 hostname=pi-01
 
+# admin web login (user: admin) at http://<hostname>.local:8080/admin
+# Default is this node's id if left empty.
+admin_password=
+
 # control node only: token Node-RED must send to the power API
 # (X-Auth-Token header or ?token=). Leave empty to disable auth.
 api_token=
