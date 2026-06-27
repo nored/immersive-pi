@@ -1,0 +1,4 @@
+---
+- name: reboot for hardening
+  ansible.builtin.reboot:
+    reboot_timeout: 180

@@ -1,0 +1,65 @@
+#!/bin/sh
+# Runs early on every boot. If a pending update was just tried (booted from the
+# slot the updater switched to AND a pending marker exists), promote the new
+# slot once the role's main service is active; otherwise restore cmdline.bak and
+# reboot back to the previous, known-good slot.
+set -eu
+
+STATE_DIR=/var/lib/immersive-updater
+PENDING_VER="$STATE_DIR/pending-version"
+PENDING_ROOT="$STATE_DIR/pending-root"
+VERSION_FILE=/etc/immersive-version
+LOG_TAG=immersive-updater-confirm
+
+log() { logger -t "$LOG_TAG" "$*" 2>/dev/null || true; echo "$*"; }
+
+[ -f "$PENDING_VER" ] || exit 0
+[ -f "$PENDING_ROOT" ] || exit 0
+
+CURRENT_ROOT=$(awk -v RS=' ' '/^root=/{sub("root=",""); print}' /proc/cmdline | head -1)
+EXPECTED_ROOT=$(cat "$PENDING_ROOT")
+TARGET_VER=$(cat "$PENDING_VER")
+
+restore_and_reboot() {
+    log "reverting cmdline.txt from .bak and rebooting"
+    mkdir -p /run/im-boot
+    mount /dev/mmcblk0p1 /run/im-boot
+    [ -f /run/im-boot/cmdline.bak ] && { cp /run/im-boot/cmdline.bak /run/im-boot/cmdline.txt; rm -f /run/im-boot/cmdline.bak; sync; }
+    umount /run/im-boot
+    rm -f "$PENDING_VER" "$PENDING_ROOT"
+    sync; sleep 1; reboot
+}
+
+if [ "$CURRENT_ROOT" != "$EXPECTED_ROOT" ]; then
+    log "boot landed on $CURRENT_ROOT but expected $EXPECTED_ROOT — clearing pending"
+    rm -f "$PENDING_VER" "$PENDING_ROOT"
+    mkdir -p /run/im-boot; mount /dev/mmcblk0p1 /run/im-boot
+    rm -f /run/im-boot/cmdline.bak; sync; umount /run/im-boot
+    exit 0
+fi
+
+# Health = the role's main service comes up. render -> immersive-render,
+# control -> immersive-control. Read the role the dispatcher recorded.
+ROLE=$(cat /run/immersive/role 2>/dev/null || echo render)
+case "$ROLE" in control) SVC=immersive-control.service ;; *) SVC=immersive-render.service ;; esac
+
+log "waiting up to 120s for $SVC to be active..."
+state="inactive"
+for i in $(seq 1 120); do
+    state=$(systemctl is-active "$SVC" || true)
+    [ "$state" = "active" ] && break
+    sleep 1
+done
+
+if [ "$state" != "active" ]; then
+    log "$SVC did not become active — reverting"
+    restore_and_reboot
+    exit 0
+fi
+
+mkdir -p /run/im-boot; mount /dev/mmcblk0p1 /run/im-boot
+rm -f /run/im-boot/cmdline.bak; sync; umount /run/im-boot
+
+echo "$TARGET_VER" > "$VERSION_FILE"
+rm -f "$PENDING_VER" "$PENDING_ROOT"
+log "promoted $TARGET_VER on $EXPECTED_ROOT"

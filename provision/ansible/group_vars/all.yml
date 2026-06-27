@@ -1,0 +1,27 @@
+---
+# Where the repo lands on every node, and who runs the services.
+immersive_root: /opt/immersive
+media_dir: /opt/immersive/media
+
+# Control node identity — render nodes point their clock + WebSocket here.
+control_host: pi-13.local
+control_ws_port: 8765
+clock_port: 8555
+http_port: 8080
+
+# Preview channel + heartbeat cadence (baked into each render node's config.json).
+preview_width: 320
+preview_height: 180
+preview_fps: 8
+preview_jpeg_quality: 60
+heartbeat_hz: 1
+
+# DRM device for the GL/KMS scanout stage.
+drm_device: /dev/dri/card0
+
+# Read-only root via overlayfs. Turn off only while iterating on a node; the
+# room runs with it on so a power cut mid-show cannot corrupt the card.
+overlayfs_enabled: true
+
+# Hardware watchdog: a hung node reboots itself back into the looping ring.
+watchdog_enabled: true

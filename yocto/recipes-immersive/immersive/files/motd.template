@@ -1,0 +1,6 @@
+
+  immersive 360 node  ·  __VERSION__
+  role: $(cat /run/immersive/role 2>/dev/null || echo '?')   ·   $(hostname).local
+
+  render: GStreamer -> GLES2 warp/blend -> KMS    control: clock + controller + web
+  calibration:  http://pi-13.local:8080           fleet:  /dashboard.html

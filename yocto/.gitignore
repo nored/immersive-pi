@@ -1,0 +1,6 @@
+output/
+secrets/update.key
+secrets/authorized_keys
+recipes-immersive/immersive/files/app/
+*.img
+*.ext4

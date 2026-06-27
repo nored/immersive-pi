@@ -1,0 +1,155 @@
+#!/bin/sh
+# Immersive 360 A/B updater.
+# Polls GitHub for the latest pi-v* release on the release repo; if newer than
+# /etc/immersive-version, downloads the manifest, verifies sha256 + HMAC,
+# AES-256-CBC-decrypts, zstd-decompresses, dd's into the inactive rootfs slot,
+# grows it, seeds device config, swaps cmdline.txt root= and reboots. On the
+# next boot immersive-updater-confirm promotes the new slot or rolls back.
+set -eu
+
+REPO="${REPO:-nored/immersive-releases}"
+KEYFILE=/etc/immersive-update.key
+VERSION_FILE=/etc/immersive-version
+STATE_DIR=/var/lib/immersive-updater
+TMP=/var/cache/immersive-updater
+LOG_TAG=immersive-updater
+
+log() { logger -t "$LOG_TAG" "$*" 2>/dev/null || true; echo "$*"; }
+fail() { log "ERROR: $*"; exit 1; }
+
+mkdir -p "$STATE_DIR" "$TMP"
+[ -f "$KEYFILE" ] || fail "$KEYFILE missing"
+
+cleanup() {
+    sync
+    umount "$STATE_DIR/probe" 2>/dev/null || true
+    umount -l "$STATE_DIR/probe" 2>/dev/null || true
+    umount /run/im-boot 2>/dev/null || true
+    umount -l /run/im-boot 2>/dev/null || true
+    rm -rf "$STATE_DIR/probe"
+}
+trap cleanup EXIT
+cleanup
+
+# Active rootfs slot from /proc/cmdline.
+ROOT=$(awk -v RS=' ' '/^root=/{sub("root=",""); print}' /proc/cmdline | head -1)
+case "$ROOT" in
+    /dev/mmcblk0p2)  ACTIVE=A; INACTIVE=B; INACTIVE_DEV=/dev/mmcblk0p3 ;;
+    /dev/mmcblk0p3)  ACTIVE=B; INACTIVE=A; INACTIVE_DEV=/dev/mmcblk0p2 ;;
+    *) fail "unrecognised root= in cmdline: $ROOT" ;;
+esac
+log "active=$ACTIVE inactive=$INACTIVE ($INACTIVE_DEV)"
+
+CUR_VER=$(cat "$VERSION_FILE" 2>/dev/null || echo "pi-v0.0.0")
+log "current version: $CUR_VER"
+
+LATEST_JSON=$(curl -fsSL --max-time 30 \
+    "https://api.github.com/repos/${REPO}/releases/latest") || fail "GitHub API unreachable"
+LATEST_TAG=$(echo "$LATEST_JSON" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -1)
+[ -n "$LATEST_TAG" ] || fail "no tag in API response"
+log "latest release: $LATEST_TAG"
+
+case "$LATEST_TAG" in pi-v*) ;; *) log "tag $LATEST_TAG not a pi release; skip"; exit 0 ;; esac
+
+# Only move forward.
+ver_num() { echo "${1#pi-v}" | awk -F. '{printf "%d%03d%03d\n", $1+0, $2+0, $3+0}'; }
+if [ "$(ver_num "$LATEST_TAG")" -le "$(ver_num "$CUR_VER")" ]; then
+    log "latest $LATEST_TAG not newer than $CUR_VER; skip"; exit 0
+fi
+
+NEED_KB=$((1800 * 1024))
+AVAIL_KB=$(df -k "$TMP" 2>/dev/null | awk 'END{print $4}')
+[ "${AVAIL_KB:-0}" -ge "$NEED_KB" ] || \
+    fail "only ${AVAIL_KB:-0} KB free in $TMP, need ${NEED_KB} KB — card too small or resize did not run"
+
+BASE="https://github.com/${REPO}/releases/download/${LATEST_TAG}"
+
+log "fetching manifest..."
+curl -fsSL --max-time 60 "$BASE/manifest.json" -o "$TMP/manifest.json" || fail "manifest download failed"
+EXPECTED_SHA=$(sed -n 's/.*"sha256": *"\([^"]*\)".*/\1/p' "$TMP/manifest.json")
+[ -n "$EXPECTED_SHA" ] || fail "no sha256 in manifest"
+ART_NAME=$(sed -n 's/.*"artifact": *"\([^"]*\)".*/\1/p' "$TMP/manifest.json")
+[ -n "$ART_NAME" ] || ART_NAME=bundle.tar.zst.enc
+
+log "downloading $ART_NAME ..."
+curl -fL --max-time 1800 -o "$TMP/$ART_NAME" "$BASE/$ART_NAME" || fail "artifact download failed"
+
+ACTUAL_SHA=$(sha256sum "$TMP/$ART_NAME" | awk '{print $1}')
+[ "$ACTUAL_SHA" = "$EXPECTED_SHA" ] || fail "sha256 mismatch ($ACTUAL_SHA != $EXPECTED_SHA)"
+log "sha256 OK"
+
+log "verifying HMAC ..."
+hexify() { od -An -v -tx1 | tr -d ' \n'; }
+MASTER_HEX=$(hexify < "$KEYFILE")
+ENC_KEY_HEX=$(printf 'immersive-enc:%s' "$MASTER_HEX" | openssl dgst -sha256 -r | awk '{print $1}')
+MAC_KEY_HEX=$(printf 'immersive-mac:%s' "$MASTER_HEX" | openssl dgst -sha256 -r | awk '{print $1}')
+
+ART="$TMP/$ART_NAME"
+TOTAL=$(stat -c%s "$ART")
+BODY_LEN=$((TOTAL - 32))
+[ "$BODY_LEN" -gt 16 ] || fail "artifact too small"
+EXPECTED_HMAC_HEX=$(tail -c 32 "$ART" | hexify)
+ACTUAL_HMAC_HEX=$(head -c "$BODY_LEN" "$ART" | \
+    openssl dgst -sha256 -mac HMAC -macopt hexkey:"$MAC_KEY_HEX" -r | awk '{print $1}')
+[ "$EXPECTED_HMAC_HEX" = "$ACTUAL_HMAC_HEX" ] || fail "HMAC mismatch — tampered or wrong key"
+log "HMAC OK"
+
+IV_HEX=$(head -c 16 "$ART" | hexify)
+CT_LEN=$((BODY_LEN - 16))
+
+log "decrypting + decompressing ..."
+( head -c "$BODY_LEN" "$ART" | tail -c +17 | head -c "$CT_LEN" ) | \
+    openssl enc -d -aes-256-cbc -K "$ENC_KEY_HEX" -iv "$IV_HEX" > "$TMP/dec.zst" || fail "decrypt failed"
+zstd -d -f "$TMP/dec.zst" -o "$TMP/dec.tar" || fail "zstd failed"
+rm -f "$TMP/dec.zst"
+
+mkdir -p "$TMP/unpacked"; rm -rf "$TMP/unpacked/"*
+tar -x -C "$TMP/unpacked" -f "$TMP/dec.tar" || fail "tar extract failed"
+rm -f "$TMP/dec.tar"
+
+ROOTFS_FILE="$TMP/unpacked/immersive-rootfs.ext4"
+BOOT_TAR="$TMP/unpacked/immersive-boot.tar"
+[ -f "$ROOTFS_FILE" ] || fail "bundle missing immersive-rootfs.ext4"
+[ -f "$BOOT_TAR" ]    || fail "bundle missing immersive-boot.tar"
+
+log "writing rootfs to $INACTIVE_DEV ..."
+dd if="$ROOTFS_FILE" of="$INACTIVE_DEV" bs=4M conv=fsync status=none || fail "rootfs dd failed"
+sync; rm -f "$ROOTFS_FILE"
+
+log "growing rootfs ..."
+e2fsck -f -y "$INACTIVE_DEV" || true
+resize2fs "$INACTIVE_DEV" || fail "resize2fs failed"
+sync
+
+mkdir -p "$TMP/boot"; rm -rf "$TMP/boot/"*
+tar -x -C "$TMP/boot" -f "$BOOT_TAR" || fail "boot.tar extract failed"
+rm -f "$BOOT_TAR" "$ART"
+
+# Seed device identity into the new slot (a fresh build has no immersive.conf
+# on rootfs; the copy on the boot FAT is the real source, but carry /etc too).
+mkdir -p "$STATE_DIR/probe"
+if mount "$INACTIVE_DEV" "$STATE_DIR/probe" 2>/dev/null; then
+    [ -f /etc/immersive.conf ] && install -m 0644 /etc/immersive.conf "$STATE_DIR/probe/etc/immersive.conf" || true
+    [ -f /etc/hostname ] && cp /etc/hostname "$STATE_DIR/probe/etc/hostname" || true
+    sync; umount "$STATE_DIR/probe"
+else
+    fail "new slot does not mount; refusing to switch"
+fi
+rmdir "$STATE_DIR/probe"
+
+log "applying boot files + switching root to $INACTIVE_DEV ..."
+mkdir -p /run/im-boot
+mount /dev/mmcblk0p1 /run/im-boot
+cp /run/im-boot/cmdline.txt /run/im-boot/cmdline.bak
+cp -rf "$TMP/boot"/. /run/im-boot/
+rm -rf "$TMP/boot"
+NEW_CMDLINE=$(sed -E "s|root=/dev/mmcblk0p[23]|root=$INACTIVE_DEV|" /run/im-boot/cmdline.txt)
+echo "$NEW_CMDLINE" > /run/im-boot/cmdline.txt
+sync; umount /run/im-boot
+
+echo "$LATEST_TAG"   > "$STATE_DIR/pending-version"
+echo "$INACTIVE_DEV" > "$STATE_DIR/pending-root"
+
+log "rebooting into new slot $INACTIVE ($INACTIVE_DEV)"
+sync; sync; sleep 2
+reboot

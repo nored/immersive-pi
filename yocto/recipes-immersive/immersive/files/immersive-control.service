@@ -1,0 +1,19 @@
+[Unit]
+Description=Immersive 360 control node (show control + calibration web + power API)
+After=network-online.target immersive-clock.service immersive-role.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/immersive/control-node
+# IMMERSIVE_API_TOKEN for the Node-RED power endpoint comes from immersive.conf
+EnvironmentFile=-/run/immersive/control.env
+ExecStartPre=/usr/bin/immersive-config.sh
+# clock runs as immersive-clock.service, so no --with-clock here
+ExecStart=/usr/bin/python3 /opt/immersive/control-node/controller.py
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

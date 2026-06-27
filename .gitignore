@@ -1,0 +1,12 @@
+# generated media
+test-media/*.mp4
+test-media/*.h264
+# per-node concrete config (copied from config.example.json)
+render-node/config.json
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+# scratch
+*.log

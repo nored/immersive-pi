@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>immersive-pi · calibration</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<header id="topbar">
+  <div class="brand">immersive-pi</div>
+  <div class="show-controls">
+    <button data-show="prepare">Load</button>
+    <button data-show="play" class="go">Play</button>
+    <button data-show="stop">Stop</button>
+    <button data-show="blackout" class="warn">Blackout</button>
+  </div>
+  <div class="calib-order" title="In-room calibration order">
+    <span data-step="geometry" class="active">1 · geometry</span>
+    <span data-step="overlap">2 · overlap</span>
+    <span data-step="blend">3 · blend</span>
+    <span data-step="color">4 · color</span>
+  </div>
+  <div class="save-controls">
+    <a href="dashboard.html" class="fleet-link" title="Fleet heartbeat dashboard">fleet ▦</a>
+    <span id="version">v—</span>
+    <span id="conn" class="conn down">offline</span>
+    <button id="save" class="go">Save + commit</button>
+  </div>
+</header>
+
+<main>
+  <!-- left: live preview grid of every node -->
+  <aside id="grid">
+    <h2>Nodes</h2>
+    <div id="thumbs"></div>
+    <button id="swap" class="warn" title="Recalibrate one swapped projector; the other entries never change">Beamer swap…</button>
+  </aside>
+
+  <!-- center: selected node editor -->
+  <section id="editor">
+    <div id="editor-head">
+      <h2 id="sel-title">no node selected</h2>
+      <div id="patterns">
+        <button data-pat="video" class="active">video</button>
+        <button data-pat="grid">grid</button>
+        <button data-pat="crosshair">crosshair</button>
+        <button data-pat="grey">grey</button>
+        <button data-pat="white">white</button>
+        <button data-pat="color">color</button>
+        <button id="identify" title="Flash this projector white">identify</button>
+      </div>
+    </div>
+    <div id="stage">
+      <img id="backdrop" alt="live preview" />
+      <canvas id="mesh-canvas"></canvas>
+      <div id="no-sel">select a node from the grid</div>
+    </div>
+    <div id="mesh-res">
+      mesh
+      <select id="res-select">
+        <option value="2x2">2×2 (corner-pin)</option>
+        <option value="3x3">3×3</option>
+        <option value="4x4">4×4</option>
+        <option value="6x6">6×6</option>
+        <option value="8x8">8×8</option>
+      </select>
+      <span class="hint">drag a handle → the wall moves</span>
+    </div>
+  </section>
+
+  <!-- right: blend + color editors -->
+  <aside id="params">
+    <section class="panel" id="panel-blend">
+      <h2>Blend</h2>
+      <p class="hint">tune on grey until the seam vanishes</p>
+      <div id="blend-edges"></div>
+    </section>
+    <section class="panel" id="panel-color">
+      <h2>Color</h2>
+      <p class="hint">tune on white &amp; solids against ring drift</p>
+      <div id="color-controls"></div>
+    </section>
+    <section class="panel" id="panel-hb">
+      <h2>Heartbeat</h2>
+      <pre id="hb"></pre>
+    </section>
+  </aside>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+# Control node runtime deps (on top of Pi OS Bookworm system packages).
+#
+# System packages (apt) — NOT pip:
+#   gstreamer1.0-tools gstreamer1.0-plugins-base
+#   python3-gi python3-gst-1.0 gir1.2-gst-plugins-base-1.0
+#   git
+#
+# pip packages:
+websockets>=12.0
+numpy>=1.24
+# structured-light auto-calibration (Milestone 4) only:
+opencv-python>=4.8     # single-camera capture + image handling for scan.py

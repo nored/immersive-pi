@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>immersive-pi · fleet</title>
+<link rel="stylesheet" href="style.css" />
+<style>
+  #fleet { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 10px; padding: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+    padding: 10px 12px; }
+  .card h3 { margin: 0 0 8px; font-size: 14px; display: flex; justify-content: space-between; }
+  .card .proj { color: var(--dim); font-weight: 400; }
+  .metric { display: flex; justify-content: space-between; font-size: 12px; margin: 3px 0;
+    font-variant-numeric: tabular-nums; color: var(--dim); }
+  .metric b { color: var(--ink); font-weight: 600; }
+  .flags { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; min-height: 20px; }
+  .flag { font-size: 11px; padding: 2px 7px; border-radius: 10px; }
+  .flag.ok { background: #14361f; color: #5fd693; }
+  .flag.drift { background: #3a2f12; color: #e0c46a; }
+  .flag.stall { background: #3a1f17; color: #e0613a; }
+  .flag.thermal { background: #3a1717; color: #e06a6a; }
+  .flag.down { background: #2a2f37; color: #8a96a6; }
+  .card.bad { border-color: var(--warn); }
+  #fhead { display: flex; align-items: center; gap: 16px; padding: 10px 14px;
+    background: var(--panel); border-bottom: 1px solid var(--line); }
+  #fhead a { color: var(--sel); text-decoration: none; }
+</style>
+</head>
+<body>
+<div id="fhead">
+  <strong>immersive-pi · fleet heartbeat</strong>
+  <span id="summary" class="hint"></span>
+  <span id="conn" class="conn down" style="margin-left:auto">offline</span>
+  <a href="index.html">calibration →</a>
+</div>
+<div id="fleet"></div>
+<script src="dashboard.js"></script>
+</body>
+</html>

@@ -1,0 +1,19 @@
+[Unit]
+Description=Immersive 360 control node (clock master + show control + calibration web)
+After=network-online.target clock.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/immersive/control-node
+# The net clock runs as clock.service, so the controller does NOT use
+# --with-clock (it would double-bind the clock port). No --autoplay: the room is
+# started from the tablet or the controller CLI, and nodes keep looping without
+# the master in steady state.
+ExecStart=/usr/bin/python3 /opt/immersive/control-node/controller.py
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

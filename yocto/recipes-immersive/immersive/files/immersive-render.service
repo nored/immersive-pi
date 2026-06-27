@@ -1,0 +1,19 @@
+[Unit]
+Description=Immersive 360 render node (GStreamer decode + GLES2 warp/blend -> KMS)
+After=network-online.target immersive-role.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/immersive/render-node
+# config.json is generated per-node by immersive-config.sh from immersive.conf
+ExecStartPre=/usr/bin/immersive-config.sh
+ExecStart=/usr/bin/python3 /opt/immersive/render-node/agent.py --config /run/immersive/config.json
+Restart=always
+RestartSec=2
+# performance governor for steady 1080p60 decode
+ExecStartPre=-/bin/sh -c 'echo performance > /sys/devices/system/cpu/cpufreq/policy0/scaling_governor 2>/dev/null'
+
+[Install]
+WantedBy=multi-user.target

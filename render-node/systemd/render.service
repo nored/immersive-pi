@@ -1,0 +1,21 @@
+[Unit]
+Description=Immersive 360 render node (GStreamer decode + GLES2 warp/blend -> KMS)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# The render node owns the display directly via DRM/KMS, so it must NOT run
+# under a desktop compositor. Boot the Pi to console (no X/Wayland).
+User=root
+WorkingDirectory=/opt/immersive/render-node
+ExecStart=/usr/bin/python3 /opt/immersive/render-node/agent.py --config /opt/immersive/render-node/config.json
+Restart=always
+RestartSec=2
+# Give DRM master and v4l2 access; root already has these on Pi OS.
+Environment=GST_DEBUG=1
+# Keep looping on the last base time even if the controller is away.
+Environment=IMMERSIVE_KEEP_LOOPING=1
+
+[Install]
+WantedBy=multi-user.target

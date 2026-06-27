@@ -1,0 +1,93 @@
+[
+  {
+    "id": "immersive-tab",
+    "type": "tab",
+    "label": "Immersive 360 power",
+    "disabled": false,
+    "info": "Sleep/wake the 360 room via the control node REST API.\nSet the token in the two change nodes and the host in the http request nodes."
+  },
+  {
+    "id": "sched-hibernate",
+    "type": "inject",
+    "z": "immersive-tab",
+    "name": "23:00 hibernate",
+    "props": [{ "p": "payload" }],
+    "repeat": "",
+    "crontab": "00 23 * * *",
+    "once": false,
+    "topic": "hibernate",
+    "payload": "",
+    "payloadType": "str",
+    "x": 150, "y": 80,
+    "wires": [["set-token"]]
+  },
+  {
+    "id": "sched-wake",
+    "type": "inject",
+    "z": "immersive-tab",
+    "name": "08:00 wake",
+    "props": [{ "p": "payload" }],
+    "repeat": "",
+    "crontab": "00 08 * * *",
+    "once": false,
+    "topic": "wake",
+    "payload": "",
+    "payloadType": "str",
+    "x": 140, "y": 140,
+    "wires": [["set-token"]]
+  },
+  {
+    "id": "btn-hibernate",
+    "type": "inject",
+    "z": "immersive-tab",
+    "name": "▶ hibernate now",
+    "props": [{ "p": "payload" }],
+    "topic": "hibernate",
+    "x": 160, "y": 220,
+    "wires": [["set-token"]]
+  },
+  {
+    "id": "btn-wake",
+    "type": "inject",
+    "z": "immersive-tab",
+    "name": "▶ wake now",
+    "props": [{ "p": "payload" }],
+    "topic": "wake",
+    "x": 150, "y": 280,
+    "wires": [["set-token"]]
+  },
+  {
+    "id": "set-token",
+    "type": "change",
+    "z": "immersive-tab",
+    "name": "headers + url from topic",
+    "rules": [
+      { "t": "set", "p": "headers", "pt": "msg", "to": "{\"X-Auth-Token\":\"CHANGE_ME\"}", "tot": "json" },
+      { "t": "set", "p": "url", "pt": "msg", "to": "http://pi-13.local:8080/api/", "tot": "str" },
+      { "t": "set", "p": "url", "pt": "msg", "to": "url & topic", "tot": "jsonata" }
+    ],
+    "x": 430, "y": 160,
+    "wires": [["api-call"]]
+  },
+  {
+    "id": "api-call",
+    "type": "http request",
+    "z": "immersive-tab",
+    "name": "POST /api/{hibernate|wake}",
+    "method": "POST",
+    "ret": "obj",
+    "url": "",
+    "x": 720, "y": 160,
+    "wires": [["dbg"]]
+  },
+  {
+    "id": "dbg",
+    "type": "debug",
+    "z": "immersive-tab",
+    "name": "result",
+    "active": true,
+    "complete": "payload",
+    "x": 950, "y": 160,
+    "wires": []
+  }
+]

@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "show": "ambient-loop",
+  "media": "pan.mp4",
+  "loop": true,
+  "canvas": { "cols": 12, "rows": 1 },
+  "power": {
+    "backend": "none",
+    "wake_wait_s": 45,
+    "poweroff_grace_s": 8,
+    "ports": {},
+    "http": { "on": "http://poe.local/port/{port}/on", "off": "http://poe.local/port/{port}/off", "method": "POST", "headers": {} },
+    "shell": { "on": "", "off": "" },
+    "gpio": { "chip": "gpiochip0", "lines": {}, "active_low": true, "pulse_ms": 400 }
+  },
+  "nodes": [
+    {
+      "node": "pi-01",
+      "projector": "P1",
+      "source_region": { "x": 0.0, "y": 0.0, "w": 0.5417, "h": 1.0 },
+      "mesh": {
+        "cols": 2,
+        "rows": 2,
+        "points": [
+          { "u": 0.0, "v": 0.0, "x": -1.0, "y":  1.0 },
+          { "u": 1.0, "v": 0.0, "x":  1.0, "y":  1.0 },
+          { "u": 0.0, "v": 1.0, "x": -1.0, "y": -1.0 },
+          { "u": 1.0, "v": 1.0, "x":  1.0, "y": -1.0 }
+        ]
+      },
+      "blend": {
+        "left":   { "width": 0.0,    "gamma": 2.2, "black_lift": 0.0 },
+        "right":  { "width": 0.0833, "gamma": 2.2, "black_lift": 0.04 },
+        "top":    { "width": 0.0,    "gamma": 2.2, "black_lift": 0.0 },
+        "bottom": { "width": 0.0,    "gamma": 2.2, "black_lift": 0.0 }
+      },
+      "color": { "gain": [1.0, 1.0, 1.0], "gamma": 2.2, "lift": [0.0, 0.0, 0.0] }
+    },
+    {
+      "node": "pi-02",
+      "projector": "P2",
+      "source_region": { "x": 0.4583, "y": 0.0, "w": 0.5417, "h": 1.0 },
+      "mesh": {
+        "cols": 2,
+        "rows": 2,
+        "points": [
+          { "u": 0.0, "v": 0.0, "x": -1.0, "y":  1.0 },
+          { "u": 1.0, "v": 0.0, "x":  1.0, "y":  1.0 },
+          { "u": 0.0, "v": 1.0, "x": -1.0, "y": -1.0 },
+          { "u": 1.0, "v": 1.0, "x":  1.0, "y": -1.0 }
+        ]
+      },
+      "blend": {
+        "left":   { "width": 0.0833, "gamma": 2.2, "black_lift": 0.04 },
+        "right":  { "width": 0.0,    "gamma": 2.2, "black_lift": 0.0 },
+        "top":    { "width": 0.0,    "gamma": 2.2, "black_lift": 0.0 },
+        "bottom": { "width": 0.0,    "gamma": 2.2, "black_lift": 0.0 }
+      },
+      "color": { "gain": [1.0, 1.0, 1.0], "gamma": 2.2, "lift": [0.0, 0.0, 0.0] }
+    }
+  ]
+}

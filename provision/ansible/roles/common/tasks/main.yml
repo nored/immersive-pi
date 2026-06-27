@@ -1,0 +1,52 @@
+---
+# Base image shared by render and control nodes.
+
+- name: Set hostname to the node id
+  ansible.builtin.hostname:
+    name: "{{ node_id }}"
+
+- name: Install base packages
+  ansible.builtin.apt:
+    name:
+      - python3
+      - python3-gi
+      - python3-gst-1.0
+      - gstreamer1.0-tools
+      - gstreamer1.0-plugins-base
+      - git
+      - avahi-daemon          # mDNS pi-NN.local on the dedicated switch
+      - chrony                # steady wall-clock; PTP/net-clock ride on top
+    update_cache: true
+    cache_valid_time: 3600
+    state: present
+
+- name: Create the immersive root
+  ansible.builtin.file:
+    path: "{{ immersive_root }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Sync the repository to every node
+  ansible.posix.synchronize:
+    src: "{{ playbook_dir }}/../../"      # repo root (immersive-pi/)
+    dest: "{{ immersive_root }}/"
+    delete: true
+    rsync_opts:
+      - "--exclude=.git"
+      - "--exclude=test-media/*.mp4"
+      - "--exclude=__pycache__"
+      - "--exclude=provision"
+  notify:
+    - restart immersive services
+
+- name: Media directory
+  ansible.builtin.file:
+    path: "{{ media_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Boot to console (no desktop — the render stage owns DRM/KMS directly)
+  ansible.builtin.command: systemctl set-default multi-user.target
+  changed_when: false

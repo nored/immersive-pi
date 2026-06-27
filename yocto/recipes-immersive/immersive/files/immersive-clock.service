@@ -1,0 +1,15 @@
+[Unit]
+Description=Immersive 360 net time provider (master media clock)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/immersive/control-node
+ExecStart=/usr/bin/python3 /opt/immersive/control-node/clock_master.py --port 8555
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

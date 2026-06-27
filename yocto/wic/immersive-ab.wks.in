@@ -1,0 +1,14 @@
+# A/B partition layout for immersive-pi
+#  p1: vfat boot          256 MB  (config.txt, cmdline.txt, kernel, dtbs, immersive.conf)
+#  p2: ext4 rootfs A     1536 MB
+#  p3: ext4 rootfs B     1536 MB  (empty, for OTA)
+#  p4: ext4 data           free   (resized/dropped on first boot)
+#
+# First-boot immersive-resize grows p2 + recreates p3 to fill the card.
+
+part /boot --source bootimg-partition --ondisk mmcblk0 --fstype=vfat --label boot --active --align 4096 --size 256 --use-uuid
+part /     --source rootfs            --ondisk mmcblk0 --fstype=ext4 --label rootfsA --align 4096 --fixed-size 1536 --use-uuid
+part       --source empty             --ondisk mmcblk0 --fstype=ext4 --label rootfsB --align 4096 --fixed-size 1536 --use-uuid
+part       --source empty             --ondisk mmcblk0 --fstype=ext4 --label data    --align 4096 --size 32 --use-uuid
+
+bootloader --append="net.ifnames=0 quiet"

@@ -1,0 +1,12 @@
+[Unit]
+Description=Immersive 360 role dispatch (render | control from immersive.conf)
+After=network-online.target avahi-daemon.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/immersive-role.sh
+
+[Install]
+WantedBy=multi-user.target

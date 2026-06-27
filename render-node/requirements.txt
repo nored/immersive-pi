@@ -1,0 +1,13 @@
+# Render node runtime deps (on top of Pi OS Bookworm system packages).
+#
+# System packages (apt) — NOT pip:
+#   gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good
+#   gstreamer1.0-plugins-bad gstreamer1.0-libav
+#   python3-gi python3-gst-1.0
+#   libgles2 libegl1 libgbm1 libdrm2
+#
+# pip packages:
+websockets>=12.0
+PyOpenGL>=3.1.7
+pillow>=10.0          # JPEG encode for the preview channel (fast path uses turbojpeg if present)
+numpy>=1.24

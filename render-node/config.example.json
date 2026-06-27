@@ -1,0 +1,19 @@
+{
+  "node": "pi-01",
+  "control_host": "pi-13.local",
+  "control_ws_port": 8765,
+  "clock_port": 8555,
+  "media_dir": "/opt/immersive/media",
+  "drm": {
+    "device": "/dev/dri/card0",
+    "connector": "auto"
+  },
+  "preview": {
+    "width": 320,
+    "height": 180,
+    "fps": 8,
+    "jpeg_quality": 60
+  },
+  "heartbeat_hz": 1,
+  "allow_poweroff": false
+}

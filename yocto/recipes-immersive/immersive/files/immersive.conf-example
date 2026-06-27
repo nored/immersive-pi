@@ -1,0 +1,25 @@
+# immersive.conf — per-node config on the boot FAT partition.
+# Edit this file (mounted as /boot or /boot/firmware) to set a node's identity.
+# A copy here survives an OTA that rewrites the rootfs slot.
+#
+# key=value, one per line.
+
+# role of this node: render (one projector) or control (Pi 13).
+role=render
+
+# this node's id and the control node to reach.
+node=pi-01
+control_host=pi-13.local
+
+# hostname -> mDNS <hostname>.local
+hostname=pi-01
+
+# control node only: token Node-RED must send to the power API
+# (X-Auth-Token header or ?token=). Leave empty to disable auth.
+api_token=
+
+# render node only: allow the hibernate command to power the Pi off.
+allow_poweroff=true
+
+# optional timezone for the control node's logs/commits.
+timezone=Europe/Berlin

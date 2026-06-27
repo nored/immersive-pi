@@ -1,0 +1,19 @@
+{
+  "node": "{{ node_id }}",
+  "control_host": "{{ control_host }}",
+  "control_ws_port": {{ control_ws_port }},
+  "clock_port": {{ clock_port }},
+  "media_dir": "{{ media_dir }}",
+  "drm": {
+    "device": "{{ drm_device }}",
+    "connector": "auto"
+  },
+  "preview": {
+    "width": {{ preview_width }},
+    "height": {{ preview_height }},
+    "fps": {{ preview_fps }},
+    "jpeg_quality": {{ preview_jpeg_quality }}
+  },
+  "heartbeat_hz": {{ heartbeat_hz }},
+  "loop": true
+}

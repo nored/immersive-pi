@@ -1,0 +1,60 @@
+---
+# Field hardening. Runs LAST because overlayfs makes the root read-only: after
+# this, the running system's writes land in a tmpfs upper layer and evaporate on
+# reboot, so the card cannot be corrupted by a power cut mid-show. Re-run the
+# playbook with -e overlayfs_enabled=false to open a node for real edits.
+
+- name: Hardware watchdog — a hung node reboots itself back into the ring
+  when: watchdog_enabled | bool
+  block:
+    - name: Enable the Broadcom watchdog
+      ansible.builtin.lineinfile:
+        path: /boot/firmware/config.txt
+        line: "dtparam=watchdog=on"
+      notify: reboot for hardening
+
+    - name: Install + configure systemd watchdog
+      ansible.builtin.copy:
+        dest: /etc/systemd/system.conf.d/watchdog.conf
+        mode: "0644"
+        content: |
+          [Manager]
+          RuntimeWatchdogSec=15
+          RebootWatchdogSec=2min
+
+- name: Volatile logs (don't write the card every heartbeat)
+  ansible.builtin.lineinfile:
+    path: /etc/systemd/journald.conf
+    regexp: '^#?Storage='
+    line: 'Storage=volatile'
+
+# --- overlayfs read-only root -------------------------------------------
+# Raspberry Pi OS ships the overlay filesystem switch in raspi-config. We toggle
+# it non-interactively so the same playbook can enable or (with the override)
+# disable it. do_overlayfs 0 = enable, 1 = disable.
+
+- name: Query current overlayfs state
+  ansible.builtin.command: raspi-config nonint get_overlay_now
+  register: overlay_now
+  changed_when: false
+  failed_when: false
+
+- name: Enable overlayfs read-only root
+  ansible.builtin.command: raspi-config nonint do_overlayfs 0
+  when:
+    - overlayfs_enabled | bool
+    - overlay_now.stdout | default('1') | trim != '0'
+  notify: reboot for hardening
+
+- name: Disable overlayfs (open the card for edits)
+  ansible.builtin.command: raspi-config nonint do_overlayfs 1
+  when:
+    - not (overlayfs_enabled | bool)
+    - overlay_now.stdout | default('1') | trim == '0'
+  notify: reboot for hardening
+
+- name: Make /boot read-only as well (belt and braces against the FAT partition)
+  ansible.builtin.command: raspi-config nonint do_overlayfs_boot_partition 0
+  when: overlayfs_enabled | bool
+  changed_when: false
+  failed_when: false
