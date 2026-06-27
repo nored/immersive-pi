@@ -53,7 +53,7 @@ do_install() {
     install -m 0644 ${WORKDIR}/immersive-control.service ${D}${systemd_system_unitdir}/
     install -m 0644 ${WORKDIR}/immersive-clock.service   ${D}${systemd_system_unitdir}/
 
-    # default wired config so eth0 comes up even before the early net service
+    # wired config for every node: DHCP (addresses from the site network)
     install -d ${D}${sysconfdir}/systemd/network
     install -m 0644 ${WORKDIR}/eth0-default.network \
         ${D}${sysconfdir}/systemd/network/10-eth0.network

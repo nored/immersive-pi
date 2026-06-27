@@ -1,10 +1,10 @@
 # meta-immersive — Yocto image for the 360 room
 
-A scarthgap Yocto image for the immersive 360 Pi cluster. **One image serves both
+A scarthgap Yocto image for the immersive Pi cluster. **One image serves both
 roles** — each node reads `role=render|control` from `immersive.conf` on the boot
-FAT — with **A/B partitions and encrypted over-the-air updates**, the same
-pattern as yBrowser. This is the production OS for the nodes; it supersedes the
-Ansible/Pi-OS path in `provision/ansible` (kept as an alternative).
+FAT — with **A/B partitions and over-the-air updates**. This is the OS for the
+nodes; this README is for *building* the image (a developer task). Operators only
+flash it and use the website — see `docs/DEPLOY.md`.
 
 ## What the image is
 

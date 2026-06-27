@@ -1,53 +1,29 @@
-# ENROLLMENT — add nodes from the website (DHCP + mDNS)
+# ENROLLMENT — add nodes from the website
 
-Adding a node is done from the calibration website. No static IPs, and the
-control node is **not** a DHCP server — that only works on an isolated network
-you own, and is disruptive on a managed/venue network. Instead:
+Nodes are added and named from the website. Addressing is the network's DHCP;
+discovery is mDNS. No static IPs are assigned and the control node is not a DHCP
+server.
 
-- **Every node takes the network's own DHCP** for its address.
-- **Nodes are found by mDNS** (`<node>.local`, advertised by avahi). Render nodes
-  reach the control node by its `.local` name (`control_host`, default
-  `pi-13.local`); the control plane is inbound, so the control node never needs
-  to dial a node by IP.
-- Each node also advertises an `_immersive._tcp` service, so the whole fleet is
-  discoverable with `avahi-browse -rt _immersive._tcp` (TXT records carry node
-  id, MAC, serial).
+- Each node takes the network's DHCP for its address and is reachable as
+  `<node>.local`.
+- Render nodes reach the control node by its `.local` name; the control plane is
+  inbound, so no node is addressed by IP.
 
-The network stack is **systemd-networkd + systemd-resolved + avahi** — no
-NetworkManager, no DHCP server of our own.
+## Adding a node
 
-## Enrolling a fresh Pi
+The control node's website lists nodes from three sources:
 
-1. Flash the image and boot the Pi on the network. It gets an address from the
-   site's DHCP and finds the control node by mDNS (`control_host`), then connects
-   and announces its **MAC + serial**.
-2. It appears on the website under **Pending enrollment** (a highlighted panel in
-   the node sidebar) showing its MAC and serial.
-3. Click **Assign**: give it a node id (`pi-NN` suggested) and a role
-   (render / control). The control node records the entry (with the MAC for
-   identification) and tells the Pi to **adopt** the identity.
-4. The Pi writes `immersive.conf` (role + id + hostname), reboots, comes back as
-   `<node>.local`, and rejoins the running room. Its address is whatever DHCP
-   gives it — you never assign one.
+- **automatic** — a node on the network appears on its own (mDNS / when it
+  connects);
+- **manual** — click **＋ add node** and enter an id (and, if needed, the node's
+  `.local` name or IP) to register it directly.
 
-No IP is ever entered. To reach a node for maintenance, use `<node>.local`
-(e.g. `ssh root@pi-07.local`).
+## Enrolling a fresh node
 
-## Listing the fleet over mDNS
+A freshly flashed node connects to the control node and shows up under **Pending
+enrolment** with its MAC and serial. Click **Assign**, give it an id and a role
+(render / control), and it adopts that identity and rejoins — at whatever address
+DHCP gave it, reachable as `<node>.local`. No IP is entered.
 
-```bash
-avahi-browse -rt _immersive._tcp      # every node, with node id / mac / serial
-ssh root@pi-07.local                  # reach a node by name
-```
-
-## Removing / renaming
-
-Remove a node from the node list (×) to drop it from the room-model. Re-running
-enrollment on a connected node reassigns its id/role. None of this touches
-addressing — that stays with the network's DHCP.
-
-## Verified off-hardware
-
-The pending → enroll → adopt flow is covered by the in-repo tests: a
-connected-but-unknown node is detected as pending, and assigning it records the
-entry (id + role + MAC) and pushes the adopt command — no IP, no DHCP server.
+Each node in the list links to its own admin page (`<node>.local:8080/admin`) for
+health and reconfiguration.

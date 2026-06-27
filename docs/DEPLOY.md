@@ -1,120 +1,56 @@
-# DEPLOY — first install: two nodes, one overlap pair
+# DEPLOY
 
-This is the two-node install that reads the real seam through the real software.
-The same binaries run later on all 12 nodes; node count does not change the seam
-result, so if a fast pan holds here it holds for the ring; if it steps, a
-single-GPU solution is the alternative.
+Deployment is the Yocto image — there is nothing to install on a node. The image
+contains the full runtime (GStreamer, GLES2/mesa, Python, the apps). Everything
+after flashing is done from the boot config file or the website.
 
-## Hardware
+## Per node
 
-- 3× Raspberry Pi 4 (4 GB). Two are render nodes, one is the control node.
-- 1× gigabit switch, dedicated (no other traffic), and short cat6 runs.
-- 2× of the room's real projectors, set to **one real overlap pair** (their
-  images must physically overlap on the wall by ~8–12 %).
-- 3× SD cards, Pi OS **Bookworm** (64-bit), booted to console (no desktop —
-  the render node owns DRM/KMS directly).
+1. Flash the image (`immersive-pi-<version>.img.xz`) to an SD card with
+   Raspberry Pi Imager (or any SD-card imager).
 
-## Network — DHCP + mDNS (no static IPs)
+2. Open the boot partition (it mounts like a USB drive) and edit the
+   `immersive.conf` text file:
 
-Nodes take the network's **DHCP** for their address and are found by **mDNS**:
-each is reachable as `<node>.local`, render nodes reach the control node by its
-`.local` name (`control_host`, default `pi-13.local`), and the whole fleet is
-browsable with `avahi-browse -rt _immersive._tcp`. There is no static-IP plan and
-no DHCP server of our own — that only works on an isolated switch you fully own
-and is disruptive on a managed network. The control plane is inbound (nodes dial
-the control node), so no node is ever addressed by IP. See `docs/ENROLLMENT.md`.
+   ```
+   role=render            # render | control
+   node=pi-01             # this node's id (the control node could be e.g. pi-13)
+   control_host=pi-13.local
+   hostname=pi-01
+   ```
 
-Ports: WebSocket control `8765`, net clock `udp/8555`, web UI `8080`.
-Where the switch supports it, run `ptp4l` for hardware clock transport; the
-GStreamer net clock rides on top regardless.
+3. Boot. The node takes DHCP, becomes reachable as `<hostname>.local`, and starts
+   its role.
 
-(If you *do* have a dedicated, isolated switch and prefer fixed addresses, the
-Ansible path in `provision/ansible` can assign static IPs from its inventory —
-that's an alternative, not the default.)
+`immersive.conf` lives on the boot partition (survives an OTA), and the same
+settings can be changed from each node's admin page (`http://<node>.local:8080/admin`).
 
-## Install (each Pi)
+## Network
 
-```bash
-sudo apt install -y gstreamer1.0-tools gstreamer1.0-plugins-base \
-  gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-libav \
-  python3-gi python3-gst-1.0 libgles2 libegl1 libgbm1 libdrm2 python3-pip
-# render nodes only:
-pip3 install --break-system-packages -r render-node/requirements.txt
-```
+DHCP + mDNS. Each node takes the network's DHCP for its address and is reachable
+as `<node>.local`. Render nodes reach the control node by its `.local` name
+(`control_host`); the fleet appears in the website's node list. No static IPs are
+assigned. See `ENROLLMENT.md`.
 
-Copy the repo to `/opt/immersive` on each Pi. On each render node, copy
-`render-node/config.example.json` to `render-node/config.json` and set `node`
-(`pi-01` / `pi-02`) and `control_host` (`pi-13.local`).
+## Running the show
 
-## Make the worst-case clip (on the control node)
+Everything is on the control node's website at `http://<control>.local:8080`:
+upload or select a video and Play/Stop, calibrate, auto-calibrate, sleep/wake.
+No commands to run.
 
-```bash
-cd /opt/immersive/test-media && ./make_pan_clip.sh
-# copy pan.mp4 to each render node's media_dir (default /opt/immersive/media)
-```
+## Reading the seam
 
-A hard white bar + numbered grid panning fast — the worst case for scanout
-phase. The numbers let you name exactly which column steps at the seam.
+Nodes share a media clock but not HDMI scanout phase, so a seam can show
+sub-frame tearing on fast motion. Play the pan clip and watch a vertical bar
+cross an overlap: if it stays continuous the scanout phase is tolerable; if it
+steps, a single-GPU solution is the alternative.
 
-## Start order
+## Heartbeats
 
-**Control node (pi-13)** — one command brings up the clock, the broker, the web
-UI, and (with `--autoplay`) starts synced playback once both nodes are up:
+The dashboard (`http://<control>.local:8080/dashboard.html`) shows one card per
+node at 1 Hz: clock offset, media position, decoder/framebuffer state, and SoC
+temperature, flagging drift, stall, or thermal throttle.
 
-```bash
-cd /opt/immersive/control-node
-python3 controller.py --with-clock --autoplay
-```
+## Codec
 
-**Each render node (pi-01, pi-02):**
-
-```bash
-cd /opt/immersive/render-node
-python3 agent.py --config config.json
-# or install the unit: systemctl enable --now render.service
-```
-
-That is the single synced-playback path: the controller waits for `pi-01` and
-`pi-02` to connect, pushes each its room-model entry, broadcasts `prepare`, then
-`play_at` with a base time 300 ms ahead so both arm and fire on the same frame.
-
-Without `--autoplay`, type `play` at the controller prompt to start, `stop` to
-halt, `nodes` to list who is connected.
-
-## Reading the seam (the test, in one sentence)
-
-Stand at the overlap, watch the white bar cross it, and decide whether it stays
-one continuous line or steps as it crosses.
-
-- **Holds** → scanout phase is tolerable; scale the same software to 12.
-- **Steps** → the free-running HDMI phase is visible on fast motion; no software
-  fixes it, and a single-GPU solution is the alternative.
-
-## What the heartbeats tell you
-
-The controller prints one line per node per second:
-
-```
-[hb] pi-01  off=  +0.412ms pos=  3.300s dec=ok fb=ok 48.7C
-```
-
-- `off` — net-clock offset from master. Tens of µs to low ms is normal and is
-  *media* alignment, not scanout phase. It does **not** predict the seam; only
-  the wall does.
-- `pos` — media position; the two nodes should track within a frame.
-- `dec/fb` — decoder and framebuffer health. `temp` — throttle watch (Pi 4
-  throttles ~80 °C).
-
-## Performance note (Pi 4, 1080p60)
-
-The decode path uses `videoconvert` to RGBA for the simplest correct GL upload.
-If the Pi 4 can't hold 60 fps at 1080p, keep NV12 out of `v4l2h264dec` and do
-YUV→RGB in the fragment shader (one luma + one chroma texture) to take the
-convert off the CPU. The warp/blend math is unchanged.
-
-## Codec / board decision (surfaced, not guessed)
-
-Milestone 1 assumes **H.264 + Pi 4** because that keeps the Pi 4 hardware decoder
-for 12 always-on nodes (`v4l2h264dec`). If content must be H.265 the nodes move
-to Pi 5 (HEVC decoder, no H.264 block). Confirm GLES2-over-GBM/DRM headless on
-the chosen board here before ordering nodes beyond this pair.
+The decode path targets H.264 (`v4l2h264dec`).

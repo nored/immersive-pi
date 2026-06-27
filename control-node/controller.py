@@ -272,6 +272,8 @@ class Controller:
             await self._broadcast_room()
         elif cmd == "enroll_node":
             await self.cmd_enroll(msg)
+        elif cmd == "autocalibrate":
+            asyncio.create_task(self.cmd_autocalibrate(msg))
         elif cmd == "hibernate":
             await self.cmd_hibernate()
         elif cmd == "wake":
@@ -328,6 +330,90 @@ class Controller:
         await asyncio.sleep(0.3)
         await self.cmd_play()
         return {"playing": True, "media": media, "nodes": list(self.nodes.keys())}
+
+    async def cmd_autocalibrate(self, opts: dict):
+        """Run structured-light auto-calibration from the website: drive each
+        connected node's gray-code scan, capture from the control node's camera,
+        decode + solve, and push the result. Progress streams to web clients."""
+        def emit(stage, pct=None, **kw):
+            return self._broadcast_web({"type": "autocalib", "stage": stage,
+                                        "pct": pct, **kw})
+        try:
+            import cv2
+        except Exception:
+            await emit("error", msg="opencv not available on the control node")
+            return
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, str(Path(__file__).resolve().parent / "autocalib"))
+        import graycode, solve as solver
+
+        PW, PH = (int(x) for x in str(opts.get("proj", "1920x1080")).lower().split("x"))
+        cols, rows = int(opts.get("cols", 4)), int(opts.get("rows", 4))
+        ring = bool(opts.get("ring", True))
+        settle = float(opts.get("settle_s", 0.3))
+        order = opts.get("nodes") or [n for n in self.room.nodes() if n in self.nodes]
+        if not order:
+            await emit("error", msg="no connected nodes to scan"); return
+
+        loop = asyncio.get_event_loop()
+        cap = cv2.VideoCapture(int(opts.get("camera", 0)))
+        if not cap.isOpened():
+            await emit("error", msg="camera did not open"); return
+
+        def grab():
+            import time
+            time.sleep(settle)
+            for _ in range(4):
+                cap.read()
+            ok, frame = cap.read()
+            if not ok:
+                raise RuntimeError("camera read failed")
+            return cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY).astype("float32")
+
+        try:
+            await emit("starting", 0, nodes=order)
+            seq = list(graycode.scan_sequence(PW, PH))
+            total = len(order) * len(seq)
+            done = 0
+            scans, cam_shape = {}, None
+            for node in order:
+                for other in order:
+                    if other != node:
+                        await self._send_node(other, {"cmd": "blackout", "on": True})
+                captures = {}
+                for name, axis, bit, inv in seq:
+                    await self._send_node(node, {"cmd": "scan_show", "axis": axis,
+                                                 "bit": bit, "inverted": inv, "on": True})
+                    gray = await loop.run_in_executor(None, grab)
+                    captures[name] = gray
+                    cam_shape = gray.shape
+                    done += 1
+                    await emit(f"scanning {node}", int(done / total * 100))
+                await self._send_node(node, {"cmd": "scan_show", "on": False})
+                for other in order:
+                    if other != node:
+                        await self._send_node(other, {"cmd": "blackout", "on": False})
+                scans[node] = graycode.decode(captures, PW, PH)
+            await emit("solving", 100)
+            entries = solver.solve(scans, cam_shape, PW, PH, cols=cols, rows=rows,
+                                   ring=ring, order=order)
+            for e in entries:
+                for field in ("source_region", "mesh", "blend"):
+                    self.room.update_field(e["node"], field, e[field])
+                    cmd = {"source_region": "set_source_region", "mesh": "set_mesh",
+                           "blend": "set_blend"}[field]
+                    await self._send_node(e["node"], {"cmd": cmd, "node": e["node"],
+                                                      field: e[field]})
+            self.room.save("auto-calibration (website)")
+            await self._broadcast_room()
+            await emit("done", 100, nodes=order)
+            print(f"[ctl] auto-calibration complete for {order}")
+        except Exception as e:
+            await emit("error", msg=str(e))
+            print(f"[ctl] auto-calibration failed: {e}")
+        finally:
+            cap.release()
 
     def playlist(self) -> dict:
         """Videos available to play (from the control node's media dir)."""

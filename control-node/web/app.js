@@ -75,6 +75,10 @@ function onMessage(m) {
     state.show = m.show;
   } else if (m.type === "saved") {
     setVersion(m.version); flash(`saved v${m.version} + committed`);
+  } else if (m.type === "autocalib") {
+    if (m.stage === "error") flash(`auto-calibrate failed: ${m.msg}`);
+    else if (m.stage === "done") flash(`auto-calibrate done`);
+    else flash(`auto-calibrate: ${m.stage}${m.pct != null ? " " + m.pct + "%" : ""}`);
   }
 }
 
@@ -378,6 +382,11 @@ function wireToolbar() {
   });
 
   document.getElementById("swap").onclick = beamerSwap;
+
+  document.getElementById("autocalib").onclick = () => {
+    if (confirm("Run structured-light auto-calibration? Projectors will flash gray-code patterns and the control-node camera will scan them."))
+      send({ cmd: "autocalibrate" });
+  };
 
   document.getElementById("add-node").onclick = () => {
     const id = prompt("New node id (e.g. pi-13):");
