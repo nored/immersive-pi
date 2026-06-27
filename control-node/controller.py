@@ -64,11 +64,13 @@ def now_ns() -> int:
 
 class Controller:
     def __init__(self, room: RoomModel, ws_port: int, clock_port: int,
-                 http_port: int):
+                 http_port: int, media_dir: Optional[Path] = None):
         self.room = room
         self.ws_port = ws_port
         self.clock_port = clock_port
         self.http_port = http_port
+        self.media_dir = Path(media_dir) if media_dir else \
+            Path(__file__).resolve().parent.parent / "test-media"
 
         self.nodes: dict[str, websockets.WebSocketServerProtocol] = {}
         self.webs: set[websockets.WebSocketServerProtocol] = set()
@@ -242,6 +244,24 @@ class Controller:
         print(f"[ctl] play_at base={base} (lead {LEAD_NS/1e6:.0f}ms) "
               f"to {len(self.nodes)} nodes")
         await self._broadcast_web({"type": "show", "show": self.show})
+
+    async def cmd_play_media(self, media: str) -> dict:
+        """Select a video and start it synced across all nodes — the action
+        behind the Node-RED POST /api/play endpoint."""
+        media = media or self.room.model.get("media", "pan.mp4")
+        await self.cmd_prepare(self.show.get("show", "show"), media)
+        await asyncio.sleep(0.3)
+        await self.cmd_play()
+        return {"playing": True, "media": media, "nodes": list(self.nodes.keys())}
+
+    def playlist(self) -> dict:
+        """Videos available to play (from the control node's media dir)."""
+        vids = []
+        if self.media_dir.exists():
+            vids = sorted(p.name for p in self.media_dir.iterdir()
+                          if p.suffix.lower() in (".mp4", ".mov", ".mkv", ".h264"))
+        return {"media_dir": str(self.media_dir), "videos": vids,
+                "current": self.show.get("media"), "playing": self.show.get("playing")}
 
     async def cmd_stop(self):
         self.show["playing"] = False
@@ -446,24 +466,51 @@ class _ApiHandler(SimpleHTTPRequestHandler):
         fut = asyncio.run_coroutine_threadsafe(coro, self.controller._loop)
         return fut.result(timeout=30)
 
+    def _param(self, key: str):
+        """Read a param from the query string or a JSON body."""
+        from urllib.parse import urlparse, parse_qs
+        q = parse_qs(urlparse(self.path).query)
+        if key in q:
+            return q[key][0]
+        n = int(self.headers.get("Content-Length", 0) or 0)
+        if n:
+            try:
+                return json.loads(self.rfile.read(n)).get(key)
+            except Exception:
+                return None
+        return None
+
     def do_POST(self):
         if not self.path.startswith("/api/"):
             self.send_error(404); return
         if not self._authed():
             self._json(401, {"error": "unauthorized"}); return
         path = self.path.split("?", 1)[0]
+        c = self.controller
         if path == "/api/hibernate":
-            self._json(200, self._call(self.controller.cmd_hibernate()))
+            self._json(200, self._call(c.cmd_hibernate()))
         elif path == "/api/wake":
-            self._json(200, self._call(self.controller.cmd_wake()))
+            self._json(200, self._call(c.cmd_wake()))
+        elif path == "/api/play":
+            media = self._param("media")           # which video to play
+            self._json(200, self._call(c.cmd_play_media(media)))
+        elif path == "/api/stop":
+            self._call(c.cmd_stop()); self._json(200, {"playing": False})
         else:
             self._json(404, {"error": "unknown endpoint"})
 
     def do_GET(self):
-        if self.path.split("?", 1)[0] == "/api/power":
+        path = self.path.split("?", 1)[0]
+        if path in ("/api/power", "/api/playlist", "/api/show"):
             if not self._authed():
                 self._json(401, {"error": "unauthorized"}); return
-            self._json(200, self.controller.power_status()); return
+            if path == "/api/power":
+                self._json(200, self.controller.power_status())
+            elif path == "/api/playlist":
+                self._json(200, self.controller.playlist())
+            else:
+                self._json(200, self.controller.show)
+            return
         super().do_GET()
 
     def log_message(self, *a):
