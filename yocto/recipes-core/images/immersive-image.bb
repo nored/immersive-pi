@@ -49,7 +49,7 @@ IMAGE_INSTALL = " \
     ffmpeg \
     avahi-daemon \
     avahi-utils \
-    nss-mdns \
+    libnss-mdns \
     chrony \
     \
     immersive \
