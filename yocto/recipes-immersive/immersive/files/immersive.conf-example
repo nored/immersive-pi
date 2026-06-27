@@ -11,6 +11,11 @@ role=render
 node=pi-01
 control_host=pi-13.local
 
+# control node only: its own static IP (it is the DHCP server + gateway).
+# render nodes leave this unset and receive their IP by DHCP reservation,
+# assigned from the calibration website (keyed by MAC).
+control_ip=10.0.0.13
+
 # hostname -> mDNS <hostname>.local
 hostname=pi-01
 

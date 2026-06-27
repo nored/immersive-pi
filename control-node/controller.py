@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Optional
 
 import powerctl
+import netmanager
 
 try:
     import websockets
@@ -102,8 +103,12 @@ class Controller:
         ensure_test_video(self.media_dir)
 
         self.nodes: dict[str, websockets.WebSocketServerProtocol] = {}
+        self.node_info: dict[str, dict] = {}   # node -> {mac, serial} from hello
         self.webs: set[websockets.WebSocketServerProtocol] = set()
         self.heartbeats: dict[str, dict] = {}
+        # DHCP / enrollment: per-node MAC->IP reservations on the dedicated net.
+        self.net = netmanager.NetManager()
+        self.network = {**netmanager.DEFAULT_NETWORK, **(room.model.get("network") or {})}
         self.show: dict = {
             "show": room.model.get("show", ""),
             "media": room.model.get("media", ""),
@@ -129,13 +134,22 @@ class Controller:
             return
         role = hello.get("role")
         if role == "node":
-            await self._serve_node(ws, hello.get("hello", "unknown"))
+            info = {"mac": (hello.get("mac") or "").lower(), "serial": hello.get("serial")}
+            await self._serve_node(ws, hello.get("hello", "unknown"), info)
         else:
             await self._serve_web(ws)
 
-    async def _serve_node(self, ws, node: str):
+    async def _serve_node(self, ws, node: str, info: dict):
         self.nodes[node] = ws
-        print(f"[ctl] node {node} connected ({len(self.nodes)} up)")
+        self.node_info[node] = info
+        enrolled = self.room.entry_for(node) is not None
+        print(f"[ctl] node {node} connected "
+              f"({'enrolled' if enrolled else 'PENDING enrollment'}, mac={info.get('mac')})")
+        if not enrolled:
+            # connected but not in the room-model — surface for assignment
+            await self._broadcast_web({"type": "pending", "pending": self.pending()})
+            await self._serve_node_loop(ws, node)
+            return
         # On connect, push this node its own room-model entry so it warps
         # correctly immediately, before any show starts.
         await self._push_entry(node)
@@ -150,15 +164,27 @@ class Controller:
                                   "loop_epoch_ns": self.show.get("loop_epoch_ns",
                                                                  self.show["base_time_ns"]),
                                   "clock_port": self.clock_port})
+        await self._serve_node_loop(ws, node)
+
+    async def _serve_node_loop(self, ws, node: str):
         try:
             async for raw in ws:
                 await self._on_node_msg(node, raw)
         except ConnClosed:
             pass
         finally:
+            was_pending = self.room.entry_for(node) is None
             self.nodes.pop(node, None)
+            self.node_info.pop(node, None)
             self.heartbeats.pop(node, None)
             print(f"[ctl] node {node} disconnected ({len(self.nodes)} up)")
+            if was_pending:
+                await self._broadcast_web({"type": "pending", "pending": self.pending()})
+
+    def pending(self) -> dict:
+        """Connected nodes that are not in the room-model — awaiting assignment."""
+        return {n: self.node_info.get(n, {}) for n in self.nodes
+                if self.room.entry_for(n) is None}
 
     async def _serve_web(self, ws):
         self.webs.add(ws)
@@ -169,7 +195,9 @@ class Controller:
                               "heartbeats": self.heartbeats,
                               "nodes_up": list(self.nodes.keys()),
                               "playlist": self.playlist(),
-                              "power_state": self.power_state})
+                              "power_state": self.power_state,
+                              "pending": self.pending(),
+                              "network": self.network})
         try:
             async for raw in ws:
                 await self._on_web_msg(raw)
@@ -237,17 +265,22 @@ class Controller:
             if msg.get("ip") or msg.get("mac"):
                 self.room.set_node_net(msg["node"], msg.get("ip"), msg.get("mac"))
             self.room.save(f"add node {msg['node']}")
+            self._apply_net()
             await self._push_entry(msg["node"])
             await self._broadcast_room()
         elif cmd == "remove_node":
             if self.room.remove_node(msg["node"]):
                 self.room.save(f"remove node {msg['node']}")
+                self._apply_net()
                 await self._broadcast_room()
         elif cmd == "set_node_net":
             self.room.set_node_net(msg["node"], msg.get("ip"), msg.get("mac"),
                                    msg.get("projector"))
             self.room.save(f"set net {msg['node']}")
+            self._apply_net()                       # IP change takes effect now
             await self._broadcast_room()
+        elif cmd == "enroll_node":
+            await self.cmd_enroll(msg)
         elif cmd == "hibernate":
             await self.cmd_hibernate()
         elif cmd == "wake":
@@ -422,6 +455,31 @@ class Controller:
             except ConnClosed:
                 pass
 
+    def _apply_net(self):
+        """Regenerate dnsmasq reservations from the room-model and reload."""
+        self.net.apply(self.room.model, self.network)
+
+    async def cmd_enroll(self, msg: dict):
+        """Assign a pending (connected-but-unknown) node a real id, IP, and role.
+        Writes the MAC->IP reservation and tells the node to adopt its identity."""
+        pending_id = msg["pending"]               # id the node is connected as
+        assigned = msg["node"]
+        ip = msg.get("ip")
+        role = msg.get("role", "render")
+        info = self.node_info.get(pending_id, {})
+        mac = info.get("mac")
+        self.room.ensure_node(assigned, msg.get("projector", ""))
+        self.room.set_node_net(assigned, ip=ip, mac=mac)
+        self.room.save(f"enroll {assigned} (mac {mac}) -> {ip} as {role}")
+        self._apply_net()                         # reservation live before adopt
+        ws = self.nodes.get(pending_id)
+        if ws:
+            await self._send(ws, {"cmd": "adopt", "node": assigned,
+                                  "role": role, "ip": ip})
+        print(f"[ctl] enrolled {pending_id} -> {assigned} ({mac} @ {ip}, {role})")
+        await self._broadcast_room()
+        await self._broadcast_web({"type": "pending", "pending": self.pending()})
+
     async def _broadcast_room(self):
         """Push the full model + playlist after a roster/network change so every
         open tablet re-renders the node list."""
@@ -477,6 +535,7 @@ class Controller:
 
     async def run(self, autoplay: bool):
         self._loop = asyncio.get_event_loop()
+        self._apply_net()                 # publish current reservations to dnsmasq
         _start_http(self)
         async with websockets.serve(self.handler, "0.0.0.0", self.ws_port,
                                     max_size=4 * 1024 * 1024):

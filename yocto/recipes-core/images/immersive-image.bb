@@ -50,6 +50,7 @@ IMAGE_INSTALL = " \
     avahi-daemon \
     avahi-utils \
     chrony \
+    dnsmasq \
     \
     immersive \
     immersive-updater \
@@ -82,6 +83,13 @@ immersive_seed_bootconf() {
             ${IMAGE_ROOTFS}/boot/immersive.conf
     fi
 }
+
+# dnsmasq only runs on the control node — the role dispatcher starts it. Drop its
+# boot auto-start (but leave it startable, so render nodes don't run a DHCP server).
+disable_dnsmasq_autostart() {
+    rm -f ${IMAGE_ROOTFS}${sysconfdir}/systemd/system/multi-user.target.wants/dnsmasq.service 2>/dev/null || true
+}
+ROOTFS_POSTPROCESS_COMMAND += "disable_dnsmasq_autostart;"
 
 # A/B layout + image types.
 IMAGE_FSTYPES = "wic ext4"

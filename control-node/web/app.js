@@ -14,6 +14,7 @@ const state = {
   nodesUp: [],
   previews: {},        // node -> dataURL
   sel: null,           // selected node id
+  pending: {},         // connected-but-unassigned nodes -> {mac, serial}
   pattern: "video",
   patColor: "#ff0000",
   step: "geometry",
@@ -44,9 +45,14 @@ function onMessage(m) {
     state.nodesUp = m.nodes_up || [];
     setVersion(state.room.version);
     populateMedia(m.playlist);
+    state.pending = m.pending || {};
+    renderPending();
     if (!state.sel && state.room.nodes.length) selectNode(state.room.nodes[0].node);
     renderThumbs();
     if (state.sel) renderEditor();
+  } else if (m.type === "pending") {
+    state.pending = m.pending || {};
+    renderPending();
   } else if (m.type === "playlist") {
     populateMedia(m.playlist);
   } else if (m.type === "room") {
@@ -117,6 +123,36 @@ function renderThumbs() {
   }
   renderThumbDots();
 }
+function renderPending() {
+  const wrap = document.getElementById("pending-wrap");
+  const list = document.getElementById("pending");
+  const ids = Object.keys(state.pending || {});
+  wrap.hidden = ids.length === 0;
+  list.innerHTML = "";
+  // suggest the next free pi-NN id
+  const have = new Set(state.room.nodes.map((n) => n.node));
+  let next = 1; while (have.has(`pi-${String(next).padStart(2, "0")}`)) next++;
+  for (const id of ids) {
+    const info = state.pending[id] || {};
+    const row = document.createElement("div");
+    row.className = "pending-row";
+    row.innerHTML =
+      `<div class="pending-id">${id}</div>` +
+      `<div class="pending-meta">${info.mac || "no mac"}${info.serial ? " · " + info.serial : ""}</div>`;
+    const btn = document.createElement("button");
+    btn.className = "go"; btn.textContent = "Assign";
+    btn.onclick = () => {
+      const node = prompt("Assign node id:", `pi-${String(next).padStart(2, "0")}`);
+      if (!node) return;
+      const role = (prompt("Role (render / control):", "render") || "render").trim();
+      const ip = prompt(`IP for ${node.trim()} (reserved by DHCP):`, "") || "";
+      send({ cmd: "enroll_node", pending: id, node: node.trim(), role, ip: ip.trim() });
+    };
+    row.appendChild(btn);
+    list.appendChild(row);
+  }
+}
+
 function renderThumbDots() {
   for (const n of state.room.nodes) {
     const dot = document.getElementById(`dot-${n.node}`);

@@ -136,6 +136,8 @@ class RenderNode:
                 self._scan_key = None
         elif cmd == "sleep":
             self._sleep(bool(msg.get("poweroff", True)))
+        elif cmd == "adopt":
+            self._adopt(msg.get("node"), msg.get("role", "render"), msg.get("ip"))
 
     def _ensure_media(self, name: str) -> Path:
         """Make sure the named clip is on this node; if not, pull it from the
@@ -224,6 +226,31 @@ class RenderNode:
                 next_resync = now + resync_interval
                 self.player.resync_if_needed()
 
+    def _adopt(self, node: str, role: str, ip: str):
+        """Adopt an identity assigned from the website: write immersive.conf on
+        the boot partition (role + node id + control host) and reboot. The IP
+        itself arrives via the control node's DHCP reservation (keyed by this
+        node's MAC), so it is recorded here only for reference."""
+        if not self.allow_poweroff:
+            print(f"[{self.node}] adopt -> {node}/{role} ip={ip} "
+                  f"(no-op; system writes disabled on this host)")
+            return
+        from pathlib import Path
+        boot = next((Path(p) for p in ("/boot/firmware", "/boot")
+                     if Path(p).is_dir()), Path("/boot"))
+        lines = [f"role={role}", f"node={node}",
+                 f"control_host={self.control_host}", f"hostname={node}",
+                 "allow_poweroff=true"]
+        if ip:
+            lines.append(f"ip={ip}")
+        try:
+            (boot / "immersive.conf").write_text("\n".join(lines) + "\n")
+            print(f"[{self.node}] adopted {node}/{role}; rebooting to apply")
+            import subprocess
+            subprocess.Popen(["systemctl", "reboot"])
+        except Exception as e:
+            print(f"[{self.node}] adopt failed: {e}")
+
     def _sleep(self, poweroff: bool):
         """Hibernate this node: stop playback, blank the projector, and (on the
         real image) clean-poweroff so the bootloader drops to low-power halt.
@@ -289,7 +316,8 @@ class RenderNode:
         while self._running:
             try:
                 async with websockets.connect(self.ws_url, max_size=4 * 1024 * 1024) as ws:
-                    await ws.send(json.dumps({"role": "node", "hello": self.node}))
+                    await ws.send(json.dumps({"role": "node", "hello": self.node,
+                                              "mac": _node_mac(), "serial": _node_serial()}))
                     print(f"[{self.node}] connected to {self.ws_url}")
                     recv = asyncio.create_task(self._ws_recv(ws))
                     send = asyncio.create_task(self._ws_send(ws))
@@ -334,6 +362,37 @@ class RenderNode:
             self.player.stop()
             if self.display:
                 self.display.teardown()
+
+
+def _node_mac() -> str:
+    """MAC of the wired interface — the key the control node's DHCP reserves on."""
+    import glob
+    for path in ["/sys/class/net/eth0/address"] + sorted(glob.glob("/sys/class/net/*/address")):
+        try:
+            iface = path.split("/")[-2]
+            if iface == "lo":
+                continue
+            mac = open(path).read().strip().lower()
+            if mac and mac != "00:00:00:00:00:00":
+                return mac
+        except Exception:
+            continue
+    return ""
+
+
+def _node_serial() -> str:
+    """Raspberry Pi serial number, for identifying a node before it's named."""
+    try:
+        with open("/proc/cpuinfo") as f:
+            for line in f:
+                if line.startswith("Serial"):
+                    return line.split(":", 1)[1].strip()
+    except Exception:
+        pass
+    try:
+        return open("/sys/firmware/devicetree/base/serial-number").read().strip("\x00").strip()
+    except Exception:
+        return ""
 
 
 def _soc_temp_c() -> float:
