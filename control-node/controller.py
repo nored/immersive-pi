@@ -111,6 +111,7 @@ class Controller:
 
         self.nodes: dict[str, websockets.WebSocketServerProtocol] = {}
         self.node_info: dict[str, dict] = {}   # node -> {mac, serial} from hello
+        self.discovered: dict[str, str] = {}   # node -> addr, found via mDNS
         self.webs: set[websockets.WebSocketServerProtocol] = set()
         self.heartbeats: dict[str, dict] = {}
         self.show: dict = {
@@ -207,6 +208,45 @@ class Controller:
         return {n: self.node_info.get(n, {}) for n in self.nodes
                 if self.room.entry_for(n) is None}
 
+    # ---- mDNS auto-discovery (control browses for nodes on the network) ---
+    def _mdns_browse(self) -> dict:
+        """{node_id: address} for _immersive._tcp services seen via avahi.
+        Runs on the Pi (avahi-browse); silently empty elsewhere."""
+        import subprocess
+        found = {}
+        try:
+            r = subprocess.run(["avahi-browse", "-rptk", "_immersive._tcp"],
+                               capture_output=True, text=True, timeout=8)
+        except Exception:
+            return found
+        for line in r.stdout.splitlines():
+            if not line.startswith("="):
+                continue
+            f = line.split(";")
+            if len(f) < 10:
+                continue
+            host, txt = f[6], f[9]
+            node = None
+            for kv in txt.replace('" "', "\x00").strip('"').split("\x00"):
+                if kv.startswith("node="):
+                    node = kv[5:]
+            if node:
+                found[node] = host
+        return found
+
+    async def _mdns_browse_loop(self):
+        while True:
+            await asyncio.sleep(15)
+            try:
+                found = await self._loop.run_in_executor(None, self._mdns_browse)
+            except Exception:
+                continue
+            disc = {n: a for n, a in found.items()
+                    if self.room.entry_for(n) is None and n not in self.nodes}
+            if disc != getattr(self, "discovered", {}):
+                self.discovered = disc
+                await self._broadcast_web({"type": "discovered", "discovered": disc})
+
     async def _serve_web(self, ws):
         self.webs.add(ws)
         # Send a snapshot so a freshly loaded tablet has the full model + state.
@@ -217,7 +257,8 @@ class Controller:
                               "nodes_up": list(self.nodes.keys()),
                               "playlist": self.playlist(),
                               "power_state": self.power_state,
-                              "pending": self.pending()})
+                              "pending": self.pending(),
+                              "discovered": self.discovered})
         try:
             async for raw in ws:
                 await self._on_web_msg(raw)
@@ -282,8 +323,9 @@ class Controller:
             await self._broadcast_web({"type": "playlist", "playlist": self.playlist()})
         elif cmd == "add_node":
             self.room.ensure_node(msg["node"], msg.get("projector", ""))
-            if msg.get("mac"):
-                self.room.set_node_net(msg["node"], mac=msg.get("mac"))
+            if msg.get("mac") or msg.get("addr"):
+                self.room.set_node_net(msg["node"], mac=msg.get("mac"),
+                                       addr=msg.get("addr"))
             self.room.save(f"add node {msg['node']}")
             await self._push_entry(msg["node"])
             await self._broadcast_room()
@@ -637,7 +679,8 @@ class Controller:
                                     max_size=4 * 1024 * 1024):
             print(f"[ctl] WebSocket broker on ws/{self.ws_port}, "
                   f"web UI on http://0.0.0.0:{self.http_port}")
-            tasks = [asyncio.create_task(self.cli())]
+            tasks = [asyncio.create_task(self.cli()),
+                     asyncio.create_task(self._mdns_browse_loop())]
             if autoplay:
                 tasks.append(asyncio.create_task(self.autoplay()))
             await asyncio.gather(*tasks)

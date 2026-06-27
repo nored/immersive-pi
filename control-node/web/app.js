@@ -15,6 +15,7 @@ const state = {
   previews: {},        // node -> dataURL
   sel: null,           // selected node id
   pending: {},         // connected-but-unassigned nodes -> {mac, serial}
+  discovered: {},      // mDNS-found nodes not yet in the room -> addr
   pattern: "video",
   patColor: "#ff0000",
   step: "geometry",
@@ -46,12 +47,16 @@ function onMessage(m) {
     setVersion(state.room.version);
     populateMedia(m.playlist);
     state.pending = m.pending || {};
+    state.discovered = m.discovered || {};
     renderPending();
     if (!state.sel && state.room.nodes.length) selectNode(state.room.nodes[0].node);
     renderThumbs();
     if (state.sel) renderEditor();
   } else if (m.type === "pending") {
     state.pending = m.pending || {};
+    renderPending();
+  } else if (m.type === "discovered") {
+    state.discovered = m.discovered || {};
     renderPending();
   } else if (m.type === "playlist") {
     populateMedia(m.playlist);
@@ -108,10 +113,13 @@ function renderThumbs() {
 
     const admin = document.createElement("div");
     admin.className = "node-admin";
-    const addr = document.createElement("span");
+    const host = (n.net && n.net.addr) || `${n.node}.local`;
+    const addr = document.createElement("a");
     addr.className = "addr";
-    addr.textContent = `${n.node}.local`;     // reached by mDNS, address via DHCP
-    addr.title = (n.net && n.net.mac) ? `mDNS · ${n.net.mac}` : "reachable via mDNS";
+    addr.href = `http://${host}:8080/admin`;
+    addr.target = "_blank";
+    addr.textContent = host;                   // click -> the node's admin page
+    addr.title = (n.net && n.net.mac) ? `admin · ${n.net.mac}` : "open admin page";
     const rm = document.createElement("button");
     rm.className = "rm"; rm.textContent = "×"; rm.title = "remove node";
     rm.onclick = () => {
@@ -128,13 +136,16 @@ function renderThumbs() {
 function renderPending() {
   const wrap = document.getElementById("pending-wrap");
   const list = document.getElementById("pending");
-  const ids = Object.keys(state.pending || {});
-  wrap.hidden = ids.length === 0;
+  const pendingIds = Object.keys(state.pending || {});
+  const discIds = Object.keys(state.discovered || {});
+  wrap.hidden = pendingIds.length === 0 && discIds.length === 0;
   list.innerHTML = "";
-  // suggest the next free pi-NN id
   const have = new Set(state.room.nodes.map((n) => n.node));
   let next = 1; while (have.has(`pi-${String(next).padStart(2, "0")}`)) next++;
-  for (const id of ids) {
+  const suggest = () => `pi-${String(next).padStart(2, "0")}`;
+
+  // connected-but-unknown nodes -> Assign (enrol id + role; node adopts)
+  for (const id of pendingIds) {
     const info = state.pending[id] || {};
     const row = document.createElement("div");
     row.className = "pending-row";
@@ -144,12 +155,27 @@ function renderPending() {
     const btn = document.createElement("button");
     btn.className = "go"; btn.textContent = "Assign";
     btn.onclick = () => {
-      const node = prompt("Assign node id:", `pi-${String(next).padStart(2, "0")}`);
+      const node = prompt("Assign node id:", suggest());
       if (!node) return;
       const role = (prompt("Role (render / control):", "render") || "render").trim();
-      // no IP — the node keeps its DHCP address and is reached as <node>.local
       send({ cmd: "enroll_node", pending: id, node: node.trim(), role });
     };
+    row.appendChild(btn);
+    list.appendChild(row);
+  }
+
+  // mDNS-discovered nodes not yet in the room -> Add (register with address)
+  for (const id of discIds) {
+    if (state.pending[id]) continue;
+    const addr = state.discovered[id];
+    const row = document.createElement("div");
+    row.className = "pending-row";
+    row.innerHTML =
+      `<div class="pending-id">${id}</div>` +
+      `<div class="pending-meta">found via mDNS · ${addr}</div>`;
+    const btn = document.createElement("button");
+    btn.className = "go"; btn.textContent = "Add";
+    btn.onclick = () => send({ cmd: "add_node", node: id, addr });
     row.appendChild(btn);
     list.appendChild(row);
   }
@@ -389,10 +415,11 @@ function wireToolbar() {
   };
 
   document.getElementById("add-node").onclick = () => {
-    const id = prompt("New node id (e.g. pi-13):");
+    const id = prompt("New node id (e.g. pi-07):");
     if (!id) return;
-    const ip = prompt(`IP address for ${id.trim()} (optional):`, "") || "";
-    send({ cmd: "add_node", node: id.trim(), ip: ip.trim() });
+    const addr = prompt(`Address for ${id.trim()} — its .local name or IP (optional):`,
+                        `${id.trim()}.local`) || "";
+    send({ cmd: "add_node", node: id.trim(), addr: addr.trim() });
   };
 
   const up = document.getElementById("upload-input");

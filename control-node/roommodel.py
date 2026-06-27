@@ -132,11 +132,11 @@ class RoomModel:
         return False
 
     def set_node_net(self, node: str, ip: str = None, mac: str = None,
-                     projector: str = None) -> dict:
-        """Per-node identity stored from the website. The MAC is kept only to
-        identify the physical Pi during enrollment; addressing is the network's
-        DHCP and discovery is mDNS (<node>.local), so no IP is assigned here.
-        `ip` is accepted but unused (informational)."""
+                     projector: str = None, addr: str = None) -> dict:
+        """Per-node identity stored from the website. `mac` identifies the
+        physical Pi during enrolment; `addr` is how to reach the node (its
+        `.local` name or an IP) for its admin page — used when registering a node
+        manually. Addressing itself is the network's DHCP; no IP is assigned."""
         with self._lock:
             entry = self.ensure_node(node)
             net = entry.setdefault("net", {})
@@ -144,6 +144,8 @@ class RoomModel:
                 net["ip"] = ip
             if mac is not None:
                 net["mac"] = mac
+            if addr is not None:
+                net["addr"] = addr
             if projector is not None:
                 entry["projector"] = projector
             return copy.deepcopy(entry)
