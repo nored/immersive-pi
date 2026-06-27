@@ -49,6 +49,7 @@ IMAGE_INSTALL = " \
     ffmpeg \
     avahi-daemon \
     avahi-utils \
+    nss-mdns \
     chrony \
     \
     immersive \
@@ -102,6 +103,25 @@ enable_systemd_network() {
     ln -sf /run/systemd/resolve/stub-resolv.conf ${IMAGE_ROOTFS}${sysconfdir}/resolv.conf
 }
 ROOTFS_POSTPROCESS_COMMAND += "enable_systemd_network;"
+
+# mDNS name resolution: avahi is the responder; nss-mdns + nsswitch make
+# getaddrinfo() resolve <node>.local (so control_host=pi-13.local works).
+# systemd-resolved is kept for unicast DNS only — MulticastDNS/LLMNR off so it
+# does not fight avahi over port 5353.
+configure_mdns_nss() {
+    if grep -q '^hosts:' ${IMAGE_ROOTFS}${sysconfdir}/nsswitch.conf 2>/dev/null; then
+        sed -i 's/^hosts:.*/hosts: files mdns4_minimal [NOTFOUND=return] dns/' \
+            ${IMAGE_ROOTFS}${sysconfdir}/nsswitch.conf
+    else
+        install -d ${IMAGE_ROOTFS}${sysconfdir}
+        echo 'hosts: files mdns4_minimal [NOTFOUND=return] dns' \
+            >> ${IMAGE_ROOTFS}${sysconfdir}/nsswitch.conf
+    fi
+    install -d ${IMAGE_ROOTFS}${sysconfdir}/systemd/resolved.conf.d
+    printf '[Resolve]\nMulticastDNS=no\nLLMNR=no\n' \
+        > ${IMAGE_ROOTFS}${sysconfdir}/systemd/resolved.conf.d/immersive.conf
+}
+ROOTFS_POSTPROCESS_COMMAND += "configure_mdns_nss;"
 
 # A/B layout + image types.
 IMAGE_FSTYPES = "wic ext4"

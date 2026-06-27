@@ -1,7 +1,0 @@
----
-- name: restart immersive services
-  ansible.builtin.systemd:
-    name: "{{ item }}"
-    state: restarted
-  loop: "{{ immersive_services | default([]) }}"
-  when: immersive_services is defined
