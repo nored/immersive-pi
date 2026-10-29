@@ -7,6 +7,8 @@ Wants=network-online.target
 Type=simple
 User=root
 WorkingDirectory=/opt/immersive/render-node
+# PyOpenGL must use the EGL backend (headless KMS, no X11/GLX)
+Environment=PYOPENGL_PLATFORM=egl
 # config.json is generated per-node by immersive-config.sh from immersive.conf
 ExecStartPre=/usr/bin/immersive-config.sh
 # release the framebuffer console so the GL stage can take DRM master for KMS:

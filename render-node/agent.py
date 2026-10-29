@@ -75,6 +75,7 @@ class RenderNode:
         self._out_q: queue.Queue = queue.Queue(maxsize=8)
         self._entry: dict | None = None
         self._blackout = False
+        self._standby = False        # soft hibernation: on the net, output off
         self._scan = None            # (axis, bit, inverted) while scanning, else None
         self._scan_key = None        # cache so we only regenerate on change
         self._identify_until = 0.0
@@ -140,7 +141,10 @@ class RenderNode:
                 self._scan = None
                 self._scan_key = None
         elif cmd == "sleep":
-            self._sleep(bool(msg.get("poweroff", True)))
+            self._sleep(bool(msg.get("poweroff", True)),
+                        standby=bool(msg.get("standby", False)))
+        elif cmd == "wake":
+            self._wake()
         elif cmd == "adopt":
             self._adopt(msg.get("node"), msg.get("role", "render"))
 
@@ -188,6 +192,15 @@ class RenderNode:
                     self._apply(self._cmd_q.get_nowait())
             except queue.Empty:
                 pass
+
+            if self._standby:
+                # soft hibernation: output is off, stay idle but keep heartbeats
+                now = time.monotonic()
+                if now >= next_hb:
+                    next_hb = now + hb_interval
+                    self._emit_heartbeat()
+                time.sleep(0.1)
+                continue
 
             if self.stage is None:
                 time.sleep(0.05)
@@ -254,13 +267,24 @@ class RenderNode:
         except Exception as e:
             print(f"[{self.node}] adopt failed: {e}")
 
-    def _sleep(self, poweroff: bool):
-        """Hibernate this node: stop playback, blank the projector, and (on the
-        real image) clean-poweroff so the bootloader drops to low-power halt.
-        Power is restored externally on wake; the node cold-boots and rejoins."""
+    def _sleep(self, poweroff: bool, standby: bool = False):
+        """Hibernate this node. Three modes:
+          - standby: stay powered and on the network, blank the projector output
+            (drops it to no-signal/standby) and idle the CPU; woken by a 'wake'
+            message. For nodes on constant power (no switch to cold-boot them).
+          - poweroff: clean-poweroff to the bootloader's low-power halt; woken by
+            external switched power or a GPIO pulse.
+          - neither: just blank (dev boxes)."""
         self._scan = None
         self._blackout = True
         self.player.stop()
+        if standby and not poweroff:
+            self._standby = True
+            self._set_governor("powersave")
+            if self.display:
+                self.display.blank()      # projector -> no signal -> standby
+            print(f"[{self.node}] standby -> output off, on network, wakeable")
+            return
         if poweroff and self.allow_poweroff:
             import subprocess
             print(f"[{self.node}] hibernate -> systemctl poweroff")
@@ -270,6 +294,24 @@ class RenderNode:
                 print(f"[{self.node}] poweroff failed: {e}")
         else:
             print(f"[{self.node}] hibernate -> blanked (poweroff disabled)")
+
+    def _wake(self):
+        """Exit standby: restore clocks and the projector output. The control
+        node re-sends prepare/play to resume the show; the next render_loop frame
+        re-runs the full modeset (display.blank cleared _prev_bo)."""
+        if not self._standby:
+            return
+        self._standby = False
+        self._blackout = False
+        self._set_governor("performance")
+        print(f"[{self.node}] wake -> output on, resuming")
+
+    def _set_governor(self, gov: str):
+        try:
+            with open("/sys/devices/system/cpu/cpufreq/policy0/scaling_governor", "w") as f:
+                f.write(gov)
+        except Exception:
+            pass
 
     def _render_scan(self):
         if self._scan != self._scan_key:

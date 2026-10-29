@@ -89,6 +89,11 @@ class KmsDisplay:
     def make_current(self):
         self._backend.make_current()
 
+    def blank(self):
+        """Turn the projector output off (standby) without tearing down GL."""
+        if self._ready:
+            self._backend.blank()
+
     def swap_and_flip(self):
         """Swap EGL buffers and page-flip the new front buffer to the CRTC."""
         self._backend.swap_and_flip()
@@ -215,6 +220,11 @@ class GLStage:
         import numpy as np
         gl = self.gl
         self._entry = entry
+        # A node that isn't calibrated yet has no mesh; keep nothing to draw
+        # rather than crashing on entry["mesh"] (blend/colour still apply later).
+        if not entry.get("mesh"):
+            self.index_count = 0
+            return
         verts, idx = build_mesh_arrays(entry)
         gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vbo)
         gl.glBufferData(gl.GL_ARRAY_BUFFER, verts.nbytes, verts, gl.GL_DYNAMIC_DRAW)

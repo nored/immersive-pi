@@ -11,10 +11,10 @@ echo "immersive-role: starting role '$ROLE'"
 
 case "$ROLE" in
     control)
-        systemctl start immersive-clock.service
-        systemctl start immersive-control.service
+        systemctl start --no-block immersive-clock.service
+        systemctl start --no-block immersive-control.service
         ;;
     render|*)
-        systemctl start immersive-render.service
+        systemctl start --no-block immersive-render.service
         ;;
 esac

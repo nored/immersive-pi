@@ -20,6 +20,8 @@ const state = {
   patColor: "#ff0000",
   step: "geometry",
   drag: null,          // {index}
+  sliding: false,      // true while a slider is dragged (skip echo re-render)
+  power: "awake",      // room power state: awake | hibernating | waking
 };
 
 // ---- websocket -------------------------------------------------------------
@@ -51,7 +53,12 @@ function onMessage(m) {
     renderPending();
     if (!state.sel && state.room.nodes.length) selectNode(state.room.nodes[0].node);
     renderThumbs();
+    state.power = m.power_state || "awake"; reflectPower();
     if (state.sel) renderEditor();
+  } else if (m.type === "power") {
+    state.power = m.state;
+    reflectPower();
+    flash(`room ${m.state}${m.note ? " — " + m.note : ""}`);
   } else if (m.type === "pending") {
     state.pending = m.pending || {};
     renderPending();
@@ -211,6 +218,9 @@ function selectNode(node) {
 function renderEditor() {
   const e = entryFor(state.sel);
   if (!e) return;
+  // A slider echoes its value back through the room broadcast; rebuilding the
+  // editor mid-drag destroys the <input> and drops focus. Skip while dragging.
+  if (state.sliding) return;
   document.getElementById("sel-title").textContent =
     `${e.node} → ${e.projector}  ·  mesh ${e.mesh.cols}×${e.mesh.rows}`;
   document.getElementById("res-select").value = `${e.mesh.cols}x${e.mesh.rows}`;
@@ -355,6 +365,7 @@ function slider(label, value, min, max, step, oninput) {
   const r = document.createElement("input");
   r.type = "range"; r.min = min; r.max = max; r.step = step; r.value = value;
   const v = document.createElement("span"); v.className = "val"; v.textContent = (+value).toFixed(3);
+  r.addEventListener("pointerdown", () => { state.sliding = true; });
   r.oninput = () => { v.textContent = (+r.value).toFixed(3); oninput(parseFloat(r.value)); };
   row.append(l, r, v);
   return row;
@@ -508,10 +519,23 @@ function flash(msg) {
   clearTimeout(flashT); flashT = setTimeout(() => setConn(state.ws.readyState === 1), 1500);
 }
 
+// reflect room power state on the Sleep/Wake buttons
+function reflectPower() {
+  const s = document.querySelector('[data-show="hibernate"]');
+  const w = document.querySelector('[data-show="wake"]');
+  if (s) s.classList.toggle("active", state.power === "hibernating");
+  if (w) w.classList.toggle("active", state.power === "waking");
+}
+
 // ---- boot ------------------------------------------------------------------
 window.addEventListener("load", () => {
   wireToolbar();
   setupMeshDrag();
   connect();
   window.addEventListener("resize", () => state.sel && drawMesh());
+  // slider drag released anywhere: re-enable editor refresh and pull in any
+  // room update that arrived (and was skipped) during the drag.
+  window.addEventListener("pointerup", () => {
+    if (state.sliding) { state.sliding = false; if (state.sel) renderEditor(); }
+  });
 });

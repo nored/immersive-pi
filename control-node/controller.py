@@ -511,17 +511,26 @@ class Controller:
         self._was_playing = self.show.get("playing", False)
         self.power_state = "hibernating"
         self.show["playing"] = False
-        # 1) tell every render node to blank and power itself off cleanly
-        await self._broadcast_nodes({"cmd": "sleep", "poweroff": True})
-        await self._broadcast_web({"type": "power", "state": "hibernating"})
-        # 2) give them a moment to halt, then cut switched power if we have it
-        grace = float(self.power_cfg.get("poweroff_grace_s", 8))
-        asyncio.create_task(self._cut_power_after(grace))
-        print(f"[ctl] HIBERNATE: {len(self.nodes)} nodes -> poweroff, "
-              f"power backend={self.power_cfg.get('backend', 'none')}")
-        return {"state": "hibernating", "nodes": list(self.nodes.keys()),
-                "backend": self.power_cfg.get("backend", "none"),
-                "can_wake": self.power.can_wake}
+        if self.power.can_wake:
+            # real power-down: nodes clean-poweroff, then cut switched power
+            await self._broadcast_nodes({"cmd": "sleep", "poweroff": True})
+            grace = float(self.power_cfg.get("poweroff_grace_s", 8))
+            asyncio.create_task(self._cut_power_after(grace))
+            mode = "poweroff"
+        else:
+            # no switched power to cold-boot the nodes (constant-power supply):
+            # soft standby — nodes stay on the network and blank the projector
+            # output, woken later by a plain 'wake' message. No WoL/wiring needed.
+            await self._broadcast_nodes({"cmd": "sleep", "poweroff": False,
+                                         "standby": True})
+            mode = "standby"
+        await self._broadcast_web({"type": "power", "state": "hibernating",
+                                   "mode": mode})
+        print(f"[ctl] HIBERNATE ({mode}): {len(self.nodes)} nodes, "
+              f"backend={self.power_cfg.get('backend', 'none')}")
+        return {"state": "hibernating", "mode": mode,
+                "nodes": list(self.nodes.keys()),
+                "backend": self.power_cfg.get("backend", "none")}
 
     async def _cut_power_after(self, grace: float):
         await asyncio.sleep(grace)
@@ -533,18 +542,28 @@ class Controller:
         them to rejoin, then resume the show if it was playing."""
         if self.power_state == "awake":
             return {"state": "awake", "note": "already awake"}
-        if not self.power.can_wake:
-            return {"state": "hibernating", "ok": False,
-                    "note": "power backend cannot wake nodes remotely; restore "
-                            "power physically (no WoL on Pi 4). Nodes auto-rejoin."}
-        for node in self.room.nodes():
-            await self.power.power_on(node)
+        if self.power.can_wake:
+            # hardware wake: restore switched power, wait for the cold-boot rejoin
+            for node in self.room.nodes():
+                await self.power.power_on(node)
+            self.power_state = "awake"
+            await self._broadcast_web({"type": "power", "state": "waking"})
+            wait_s = float(self.power_cfg.get("wake_wait_s", 45))
+            asyncio.create_task(self._resume_after_wake(wait_s))
+            print(f"[ctl] WAKE (power): restoring power, up to {wait_s:.0f}s")
+            return {"state": "waking", "wake_wait_s": wait_s,
+                    "resume_play": self._was_playing}
+        # soft standby: the nodes never left the network — tell them to resume
+        # and replay the show. Works with no switched power.
+        await self._broadcast_nodes({"cmd": "wake"})
         self.power_state = "awake"
-        await self._broadcast_web({"type": "power", "state": "waking"})
-        wait_s = float(self.power_cfg.get("wake_wait_s", 45))
-        asyncio.create_task(self._resume_after_wake(wait_s))
-        print(f"[ctl] WAKE: restoring power, waiting up to {wait_s:.0f}s for nodes")
-        return {"state": "waking", "wake_wait_s": wait_s,
+        await self._broadcast_web({"type": "power", "state": "awake", "mode": "standby"})
+        if self._was_playing:
+            await self.cmd_prepare(None, None)
+            await asyncio.sleep(0.5)
+            await self.cmd_play()
+        print(f"[ctl] WAKE (standby): {len(self.nodes)} nodes resumed")
+        return {"state": "awake", "mode": "standby",
                 "resume_play": self._was_playing}
 
     async def _resume_after_wake(self, wait_s: float):

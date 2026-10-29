@@ -298,6 +298,17 @@ class Backend:
             _libgbm.gbm_surface_release_buffer(self.gbm_surface, self._prev_bo)
         self._prev_bo = bo
 
+    def blank(self):
+        """Disable the CRTC so the connector goes to no-signal — the projector
+        drops to standby. The next present re-runs the full modeset (we clear
+        _prev_bo) to bring it back."""
+        if self.fd is not None and self.crtc_id:
+            try:
+                _libdrm.drmModeSetCrtc(self.fd, self.crtc_id, 0, 0, 0, None, 0, None)
+            except Exception as e:
+                print(f"[drm] blank failed: {e}")
+            self._prev_bo = None
+
     def teardown(self):
         try:
             for fb in self._fb_for_bo.values():

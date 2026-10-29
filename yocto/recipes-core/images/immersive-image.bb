@@ -44,6 +44,7 @@ IMAGE_INSTALL = " \
     python3-pillow \
     python3-websockets \
     python3-opencv \
+    python3-pyopengl \
     \
     git \
     ffmpeg \
