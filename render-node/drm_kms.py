@@ -14,8 +14,13 @@ from __future__ import annotations
 
 import ctypes
 import ctypes.util
+import errno
+import fcntl
 import os
 import struct
+import time
+
+from shared.display_modes import select_mode
 
 # ---- library handles -------------------------------------------------------
 _libdrm = ctypes.CDLL(ctypes.util.find_library("drm") or "libdrm.so.2", use_errno=True)
@@ -28,6 +33,22 @@ DRM_FORMAT_XRGB8888 = struct.unpack("<I", b"XR24")[0]
 GBM_BO_USE_SCANOUT = 1 << 0
 GBM_BO_USE_RENDERING = 1 << 2
 DRM_MODE_PAGE_FLIP_EVENT = 0x01
+# Linux UAPI drm.h: _IOWR('d', 0x3b, struct drm_crtc_get_sequence).
+_SEQUENCE_FORMAT = '=IIQq'
+DRM_IOCTL_CRTC_GET_SEQUENCE = (3 << 30) | (struct.calcsize(_SEQUENCE_FORMAT) << 16) | (ord('d') << 8) | 0x3b
+
+
+def current_refresh_ns(fd, crtc_id):
+    """Read the active CRTC's scanout phase without scheduling an event."""
+    request = bytearray(struct.pack(_SEQUENCE_FORMAT, crtc_id, 0, 0, 0))
+    try:
+        fcntl.ioctl(fd, DRM_IOCTL_CRTC_GET_SEQUENCE, request, True)
+    except OSError as exc:
+        if exc.errno in (errno.ENOTTY, errno.EOPNOTSUPP, errno.EINVAL, errno.ENOENT):
+            return None
+        raise
+    identity, active, sequence, timestamp = struct.unpack(_SEQUENCE_FORMAT, request)
+    return timestamp if identity == crtc_id and active and timestamp > 0 else None
 
 # ---- EGL constants ---------------------------------------------------------
 EGL_PLATFORM_GBM_KHR = 0x31D7
@@ -159,9 +180,10 @@ def _open_card(path):
 class Backend:
     """Owns the DRM fd, GBM surface, and EGL context for one projector output."""
 
-    def __init__(self, card="/dev/dri/card0", connector_pref="auto"):
+    def __init__(self, card="/dev/dri/card0", connector_pref="auto", mode=None):
         self.card = card
         self.connector_pref = connector_pref
+        self.requested_mode = mode or os.environ.get("IMMERSIVE_DRM_MODE")
         self.fd = None
         self.crtc_id = None
         self.connector_id = None
@@ -175,6 +197,9 @@ class Backend:
         self.egl_config = ctypes.c_void_p()
         self._prev_bo = None
         self._fb_for_bo = {}
+        self.last_flip_ns = None
+        self._pending_bo = None
+        self._flip_submitted = 0
 
     # ---- modeset ---------------------------------------------------------
     def modeset(self):
@@ -186,13 +211,20 @@ class Backend:
         conn = None
         for i in range(res.count_connectors):
             c = _libdrm.drmModeGetConnector(self.fd, res.connectors[i]).contents
+            name = f"HDMI-A-{c.connector_type_id}" if c.connector_type == 11 else str(c.connector_id)
+            if self.connector_pref not in ("auto", name, str(c.connector_id)):
+                continue
             if c.connection == DRM_MODE_CONNECTED and c.count_modes > 0:
+                try:
+                    selected = select_mode([c.modes[j] for j in range(c.count_modes)], self.requested_mode)
+                except ValueError:
+                    continue
                 conn = c
                 break
         if conn is None:
-            raise RuntimeError("no connected connector with a mode")
+            raise RuntimeError(f"no connected connector supports {self.requested_mode or 'a display mode'}; check HDMI/EDID")
         self.connector_id = conn.connector_id
-        self.mode = conn.modes[0]  # preferred mode is first
+        self.mode = selected
         self.width = self.mode.hdisplay
         self.height = self.mode.vdisplay
         enc = _libdrm.drmModeGetEncoder(self.fd, conn.encoder_id)
@@ -261,7 +293,8 @@ class Backend:
         return ctypes.c_void_p(configs[0]) if count else None
 
     def make_current(self):
-        _libegl.eglMakeCurrent(self.egl_dpy, self.egl_surf, self.egl_surf, self.egl_ctx)
+        if not _libegl.eglMakeCurrent(self.egl_dpy, self.egl_surf, self.egl_surf, self.egl_ctx):
+            raise RuntimeError("eglMakeCurrent failed")
 
     # ---- present ---------------------------------------------------------
     def _fb_for(self, bo):
@@ -279,35 +312,89 @@ class Backend:
         self._fb_for_bo[bo] = fb.value
         return fb.value
 
-    def swap_and_flip(self):
-        _libegl.eglSwapBuffers(self.egl_dpy, self.egl_surf)
+    def queue_flip(self):
+        """Submit without waiting so GPU staging can overlap scanout/vblank."""
+        if self._pending_bo is not None:
+            raise RuntimeError("a DRM page flip is already pending")
+        return self.queue_buffer(self.stage_buffer())
+
+    def stage_buffer(self):
+        """Lock a fully rendered native scanout buffer without displaying it."""
+        if not _libegl.eglSwapBuffers(self.egl_dpy, self.egl_surf):
+            raise RuntimeError("eglSwapBuffers failed")
         bo = _libgbm.gbm_surface_lock_front_buffer(self.gbm_surface)
         if not bo:
             raise RuntimeError("gbm_surface_lock_front_buffer failed")
-        fb = self._fb_for(bo)
+        try:
+            return bo, self._fb_for(bo)
+        except Exception:
+            _libgbm.gbm_surface_release_buffer(self.gbm_surface, bo)
+            raise
+
+    def release_buffer(self, token):
+        _libgbm.gbm_surface_release_buffer(self.gbm_surface, token[0])
+
+    def queue_buffer(self, token):
+        bo, fb = token
+        if self._pending_bo is not None:
+            self.release_buffer(token)
+            raise RuntimeError("a DRM page flip is already pending")
         if self._prev_bo is None:
-            # first frame: full modeset
-            mode_ptr = ctypes.pointer(self.mode)
             conn = (ctypes.c_uint32 * 1)(self.connector_id)
-            _libdrm.drmModeSetCrtc(self.fd, self.crtc_id, fb, 0, 0, conn, 1, mode_ptr)
-        else:
-            # steady state: page flip on vblank, then reclaim the old buffer
-            _libdrm.drmModePageFlip(self.fd, self.crtc_id, fb,
-                                    DRM_MODE_PAGE_FLIP_EVENT, None)
-            _drain_flip(self.fd)
-            _libgbm.gbm_surface_release_buffer(self.gbm_surface, self._prev_bo)
-        self._prev_bo = bo
+            result = _libdrm.drmModeSetCrtc(self.fd, self.crtc_id, fb, 0, 0, conn, 1,
+                                           ctypes.pointer(self.mode))
+            if result:
+                _libgbm.gbm_surface_release_buffer(self.gbm_surface, bo)
+                raise OSError(ctypes.get_errno(), "drmModeSetCrtc failed")
+            self._prev_bo = bo
+            self.last_flip_ns = time.monotonic_ns()
+            return self.last_flip_ns
+        if _libdrm.drmModePageFlip(self.fd, self.crtc_id, fb, DRM_MODE_PAGE_FLIP_EVENT, None):
+            _libgbm.gbm_surface_release_buffer(self.gbm_surface, bo)
+            raise OSError(ctypes.get_errno(), "drmModePageFlip failed")
+        self._pending_bo = bo
+        self._flip_submitted = time.monotonic()
+        return None
+
+    def _finish_flip(self, timestamp):
+        _libgbm.gbm_surface_release_buffer(self.gbm_surface, self._prev_bo)
+        self._prev_bo, self._pending_bo = self._pending_bo, None
+        self.last_flip_ns = timestamp
+        return timestamp
+
+    def poll_flip(self):
+        if self._pending_bo is None:
+            return None
+        timestamp = _read_flip(self.fd, 0)
+        if timestamp is not None:
+            return self._finish_flip(timestamp)
+        if time.monotonic() - self._flip_submitted > .25:
+            raise TimeoutError("DRM page flip did not complete within 250ms")
+        return None
+
+    def current_refresh_ns(self):
+        return current_refresh_ns(self.fd, self.crtc_id)
+
+    def swap_and_flip(self):
+        if self._pending_bo is not None:
+            self._finish_flip(_drain_flip(self.fd))
+        timestamp = self.queue_flip()
+        return timestamp if timestamp is not None else self._finish_flip(_drain_flip(self.fd))
 
     def blank(self):
         """Disable the CRTC so the connector goes to no-signal — the projector
         drops to standby. The next present re-runs the full modeset (we clear
         _prev_bo) to bring it back."""
         if self.fd is not None and self.crtc_id:
+            if self._pending_bo is not None:
+                self._finish_flip(_drain_flip(self.fd))
             try:
                 _libdrm.drmModeSetCrtc(self.fd, self.crtc_id, 0, 0, 0, None, 0, None)
             except Exception as e:
                 print(f"[drm] blank failed: {e}")
-            self._prev_bo = None
+            if self._prev_bo:
+                _libgbm.gbm_surface_release_buffer(self.gbm_surface, self._prev_bo)
+                self._prev_bo = None
 
     def teardown(self):
         try:
@@ -333,9 +420,26 @@ class _drmEventContext(ctypes.Structure):
 _libdrm.drmHandleEvent.argtypes = [ctypes.c_int, ctypes.POINTER(_drmEventContext)]
 
 
-def _drain_flip(fd):
+def _read_flip(fd, timeout):
     import select
-    r, _, _ = select.select([fd], [], [], 0.1)
-    if fd in r:
-        ev = _drmEventContext(version=2)
-        _libdrm.drmHandleEvent(fd, ctypes.byref(ev))
+    if not select.select([fd], [], [], timeout)[0]:
+        return None
+    timestamp = []
+    callback_type = ctypes.CFUNCTYPE(None, ctypes.c_int, ctypes.c_uint,
+                                     ctypes.c_uint, ctypes.c_uint, ctypes.c_void_p)
+    @callback_type
+    def flipped(_fd, _sequence, sec, usec, _data):
+        timestamp.append(sec * 1_000_000_000 + usec * 1000)
+    event = _drmEventContext(version=2, page_flip_handler=ctypes.cast(flipped, ctypes.c_void_p))
+    if _libdrm.drmHandleEvent(fd, ctypes.byref(event)):
+        raise OSError(ctypes.get_errno(), "drmHandleEvent failed")
+    return timestamp[0] if timestamp else None
+
+
+def _drain_flip(fd):
+    deadline = time.monotonic() + .25
+    while time.monotonic() < deadline:
+        timestamp = _read_flip(fd, max(0, deadline - time.monotonic()))
+        if timestamp is not None:
+            return timestamp
+    raise TimeoutError("DRM page flip did not complete within 250ms")

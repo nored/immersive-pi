@@ -1,37 +1,41 @@
-"""controller.py — show control + heartbeat collector + WebSocket broker.
+"""Room control and protocol-v2 numbered-frame presentation barriers.
 
-One asyncio WebSocket server speaks to two kinds of client:
-  * render nodes  (role=node) — receive commands, send 1 Hz heartbeats and
-    ~8 fps preview JPEGs;
-  * web clients   (role=web)  — the calibration site: send edit/show commands,
-    receive heartbeats + previews.
-
-The controller also reads the master media clock (same GstSystemClock the
-NetTimeProvider publishes) so it can hand out a `play_at` base time a few
-hundred ms in the future, letting every node arm and fire together.
-
-Static web assets are served over plain HTTP on a second port so a tablet can
-load the site, then upgrade to WebSocket for live control.
-
-Single-command synced playback:
-    python3 controller.py --autoplay
-brings up the clock, waits for the room-model's nodes to connect, then issues
-prepare + play_at automatically.
+The master verifies identical media, waits for every decoder and GPU, then
+commits frames against a shared GstNet clock with a bounded native-buffer
+horizon. It measures actual DRM presentation acknowledgements and stops sessions
+on stale status, disconnects or missed deadlines. The HTTP server hosts the
+admin UI and same-origin WebSocket bridge for browsers.
 """
 
 from __future__ import annotations
 
 import argparse
+import copy
 import asyncio
 import functools
+import concurrent.futures
 import json
 import os
+import sys
 import threading
+import time
+import uuid
+import hashlib
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Optional
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from shared.frame_sync import PROTOCOL_VERSION, FrameCoordinator, VideoSpec
+from shared.service_health import EventLog
+from shared.http_server import make_http_server
+from shared.calibration import validate_solution, validate_field
+from shared.media_package import load_plan, validate_tile_coverage
+
 import powerctl
+from room_devices import RoomDevices
+from start_operation import managed_start
+from phone_scan import PhoneScan
 import nodeadmin
 
 try:
@@ -44,7 +48,7 @@ except Exception:  # importable on a dev box without the runtime dep
 from roommodel import RoomModel
 
 WEB_DIR = Path(__file__).with_name("web")
-LEAD_NS = 300_000_000  # 300 ms arm lead for play_at
+LEAD_NS = 100_000_000  # presentation horizon, after every member is ready
 
 
 TEST_VIDEO = "test.mp4"
@@ -81,25 +85,33 @@ def _read_version() -> str:
         return "dev"
 
 
+_master_clock_read = None
+
+
 def now_ns() -> int:
-    """'Now' on the master media clock, in nanoseconds."""
-    try:
-        import gi
-        gi.require_version("Gst", "1.0")
-        from gi.repository import Gst
-        if not Gst.is_initialized():
-            Gst.init(None)
-        return Gst.SystemClock.obtain().get_time()
-    except Exception:
-        # No GStreamer (e.g. dev box) — fall back to monotonic ns so the
-        # control logic still runs and can be tested off-Pi.
-        import time
-        return time.monotonic_ns()
+    """Read the master clock without repeating GI setup on every frame event."""
+    global _master_clock_read
+    if _master_clock_read is None:
+        try:
+            import gi
+            gi.require_version("Gst", "1.0")
+            from gi.repository import Gst
+            if not Gst.is_initialized():
+                Gst.init(None)
+            # Keep the same GstSystemClock as the network time provider.
+            _master_clock_read = Gst.SystemClock.obtain().get_time
+        except ImportError:
+            _master_clock_read = time.monotonic_ns
+    return _master_clock_read()
+
+
+from shared.timing_trace import TimingTrace
 
 
 class Controller:
     def __init__(self, room: RoomModel, ws_port: int, clock_port: int,
                  http_port: int, media_dir: Optional[Path] = None):
+        self.trace = TimingTrace()
         self.room = room
         self.ws_port = ws_port
         self.clock_port = clock_port
@@ -113,8 +125,10 @@ class Controller:
         self.node_info: dict[str, dict] = {}   # node -> {mac, serial} from hello
         self.discovered: dict[str, str] = {}   # node -> addr, found via mDNS
         self.webs: set[websockets.WebSocketServerProtocol] = set()
+        self._web_out = {}
         self.heartbeats: dict[str, dict] = {}
         self.show: dict = {
+            "trial": os.environ.get("IMMERSIVE_TRIAL") == "1",
             "show": room.model.get("show", ""),
             "media": room.model.get("media", ""),
             "playing": False,
@@ -124,6 +138,8 @@ class Controller:
         # Hibernation / Node-RED power control.
         self.power = powerctl.make(room.model.get("power"))
         self.power_cfg = room.model.get("power", {}) or {}
+        self.devices = RoomDevices(room.model.get("room_devices"))
+        self._room_operation = asyncio.Lock()
         self.power_state = "awake"          # awake | hibernating
         self._was_playing = False
         self.api_token = os.environ.get("IMMERSIVE_API_TOKEN", "")
@@ -131,6 +147,18 @@ class Controller:
         self.admin_password = nodeadmin.admin_password(socket.gethostname())
         self._started = __import__("time").monotonic()
         self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._frame_task = None
+        self._start_task = None
+        self._session = None
+        self._members = []
+        self._media_plan = None
+        self._ready_nodes = {}
+        self._frame_status = {}
+        self._ready_event = asyncio.Event()
+        self._coordinator = None
+        self._frame_receipts = {}
+        self.events = EventLog(os.environ.get("IMMERSIVE_STATE_DIR"))
+        self.phone_scan = PhoneScan(self)
 
     def admin_health(self) -> dict:
         import socket, time
@@ -144,6 +172,8 @@ class Controller:
             "version": _read_version(), "uptime_s": int(up),
             "nodes_up": len(self.nodes), "playing": self.show.get("playing"),
             "media": self.show.get("media"), "power_state": self.power_state,
+            "room_devices": self.devices.snapshot,
+            "phone_scan_active": self.phone_scan.active,
         }
 
     # ---- client lifecycle ------------------------------------------------
@@ -156,7 +186,9 @@ class Controller:
             return
         role = hello.get("role")
         if role == "node":
-            info = {"mac": (hello.get("mac") or "").lower(), "serial": hello.get("serial")}
+            info = {"mac": (hello.get("mac") or "").lower(), "serial": hello.get("serial"),
+                    "protocol": hello.get("protocol", 1),
+                    "capabilities": hello.get("capabilities", [])}
             await self._serve_node(ws, hello.get("hello", "unknown"), info)
         else:
             await self._serve_web(ws)
@@ -164,6 +196,8 @@ class Controller:
     async def _serve_node(self, ws, node: str, info: dict):
         self.nodes[node] = ws
         self.node_info[node] = info
+        self.events.record("connected", node, protocol=info.get("protocol", 1))
+        await self._broadcast_web({"type": "nodes", "nodes_up": list(self.nodes)})
         enrolled = self.room.entry_for(node) is not None
         print(f"[ctl] node {node} connected "
               f"({'enrolled' if enrolled else 'PENDING enrollment'}, mac={info.get('mac')})")
@@ -178,14 +212,8 @@ class Controller:
         # If a show is already playing, arm the late joiner onto the same base
         # time and loop epoch — this is also the node-swap path: a replaced Pi
         # boots, connects, and falls straight into the running ring.
-        if self.show["playing"] and self.show["base_time_ns"] is not None:
-            await self._send(ws, {"cmd": "prepare", "show": self.show["show"],
-                                  "slice": self.show["media"]})
-            await self._send(ws, {"cmd": "play_at",
-                                  "base_time_ns": self.show["base_time_ns"],
-                                  "loop_epoch_ns": self.show.get("loop_epoch_ns",
-                                                                 self.show["base_time_ns"]),
-                                  "clock_port": self.clock_port})
+        if self._session and node in self._members:
+            await self._fail_session(f"{node} reconnected; restart the show to prepare the full fleet")
         await self._serve_node_loop(ws, node)
 
     async def _serve_node_loop(self, ws, node: str):
@@ -196,9 +224,15 @@ class Controller:
             pass
         finally:
             was_pending = self.room.entry_for(node) is None
-            self.nodes.pop(node, None)
-            self.node_info.pop(node, None)
-            self.heartbeats.pop(node, None)
+            if self.nodes.get(node) is ws:
+                await self.phone_scan.cancel(f"{node} disconnected during phone scanning")
+                self.nodes.pop(node, None)
+                self.node_info.pop(node, None)
+                self.heartbeats.pop(node, None)
+                self.events.record("disconnected", node)
+                if self._session and node in self._members:
+                    await self._fail_session(f"{node} disconnected")
+                await self._broadcast_web({"type": "nodes", "nodes_up": list(self.nodes)})
             print(f"[ctl] node {node} disconnected ({len(self.nodes)} up)")
             if was_pending:
                 await self._broadcast_web({"type": "pending", "pending": self.pending()})
@@ -215,7 +249,7 @@ class Controller:
         import subprocess
         found = {}
         try:
-            r = subprocess.run(["avahi-browse", "-rptk", "_immersive._tcp"],
+            r = subprocess.run(["avahi-browse", "-rpt", "_immersive._tcp"],
                                capture_output=True, text=True, timeout=8)
         except Exception:
             return found
@@ -249,6 +283,15 @@ class Controller:
 
     async def _serve_web(self, ws):
         self.webs.add(ws)
+        outbound = asyncio.Queue(maxsize=64)
+        self._web_out[ws] = outbound
+        async def send_updates():
+            try:
+                while True:
+                    await asyncio.wait_for(ws.send(await outbound.get()), timeout=1)
+            except (asyncio.TimeoutError, ConnClosed):
+                await ws.close()
+        sender = asyncio.create_task(send_updates())
         # Send a snapshot so a freshly loaded tablet has the full model + state.
         await self._send(ws, {"type": "snapshot",
                               "room": self.room.model,
@@ -257,24 +300,114 @@ class Controller:
                               "nodes_up": list(self.nodes.keys()),
                               "playlist": self.playlist(),
                               "power_state": self.power_state,
+                              "room_devices": self.devices.snapshot,
                               "pending": self.pending(),
                               "discovered": self.discovered})
         try:
             async for raw in ws:
-                await self._on_web_msg(raw)
+                try:
+                    await self._on_web_msg(raw, origin=ws)
+                except (ValueError, KeyError, TypeError) as exc:
+                    try:
+                        request = json.loads(raw)
+                    except ValueError:
+                        request = {}
+                    request = request if isinstance(request, dict) else {}
+                    await self._send(ws, {"type":"error", "message":str(exc),
+                        "cmd":request.get("cmd"), "node":request.get("node"),
+                        "request_id":request.get("request_id")})
         except ConnClosed:
             pass
         finally:
+            await self.phone_scan.cancel("phone scan connection closed", owner=ws)
             self.webs.discard(ws)
+            self._web_out.pop(ws, None)
+            sender.cancel()
+            await asyncio.gather(sender, return_exceptions=True)
 
     # ---- inbound from nodes ---------------------------------------------
     async def _on_node_msg(self, node: str, raw):
         msg = json.loads(raw)
+        if msg.get("type") in ("capture_displayed", "capture_error"):
+            self.phone_scan.receipt(node, msg)
+            return
+        if msg.get("type") in ("ready", "frame_status", "frame_staged", "frame_presented", "node_error"):
+            if msg.get("session") != self._session or node not in self._members:
+                return
+            if msg["type"] in ("frame_staged", "frame_presented"):
+                self.trace.record("receipt", node=node, clock_ns=now_ns(), packet=msg)
+            if msg["type"] == "frame_staged":
+                if self._coordinator:
+                    try:
+                        self._coordinator.staged_frame(node, int(msg["sequence"]))
+                    except ValueError as exc:
+                        await self._fail_session(str(exc))
+            elif msg["type"] == "frame_presented":
+                master = self._coordinator
+                if master is None:
+                    return
+                sequence = int(msg["sequence"])
+                period = master.spec.offset_ns(1)
+                if sequence < 0 or sequence >= master.sequence or msg["frame"] != master.spec.frame_index(sequence):
+                    await self._fail_session(f"{node} acknowledged an invalid video frame")
+                    return
+                if sequence < master.presented[node]:
+                    await self._fail_session(f"{node} acknowledged an older frame")
+                    return
+                # Release the native-buffer staging horizon immediately. Waiting
+                # for the periodic status packet adds up to 20ms to every frame.
+                master.presented[node] = sequence
+                master.last_seen[node] = time.monotonic()
+                if abs(msg["presentation_error_ns"]) > period:
+                    await self._fail_session(f"{node} missed frame {sequence}'s deadline by "
+                                             f"{msg['presentation_error_ns'] / 1e6:.1f} ms")
+                    return
+                receipt = self._frame_receipts.setdefault(sequence, {})
+                receipt[node] = msg["presented_at_ns"]
+                if len(receipt) == len(self._members):
+                    skew = max(receipt.values()) - min(receipt.values())
+                    self.show["presentation_skew_ns"] = skew
+                    self.show["max_presentation_skew_ns"] = max(self.show.get("max_presentation_skew_ns", 0), skew)
+                    if skew > period:
+                        await self._fail_session(f"frame {sequence} presentation skew exceeded one video frame")
+                for old in list(self._frame_receipts):
+                    if old < sequence - 120:
+                        del self._frame_receipts[old]
+            elif msg["type"] == "ready":
+                self._ready_nodes[node] = msg["spec"]
+                self._ready_event.set()
+                await self._broadcast_web({"type": "prepare_progress", "ready": sorted(self._ready_nodes),
+                                           "waiting": sorted(set(self._members) - self._ready_nodes.keys())})
+            elif msg["type"] == "node_error" or msg.get("error"):
+                await self._fail_session(f"{node}: {msg.get('error', 'playback failed')}")
+                self._ready_event.set()
+            else:
+                self._frame_status[node] = {**msg, "received": time.monotonic()}
+                if self._coordinator:
+                    try:
+                        # The status snapshot and immediate flip receipt originate on
+                        # different node threads. A delayed snapshot must not
+                        # roll a newer, validated presentation acknowledgement back.
+                        presented = max(msg["presented"], self._coordinator.presented[node])
+                        self._coordinator.report(node, msg["buffered_first"], msg["buffered_last"], presented)
+                    except ValueError as exc:
+                        await self._fail_session(str(exc))
+            return
         if "preview" in msg:
-            # forward preview JPEG straight to all web clients
-            await self._broadcast_web(msg)
+            # Compatibility with older nodes: discard images, retain telemetry.
             return
         if "node" in msg and "clock_offset_ns" in msg:
+            self.phone_scan.display_status(node, msg.get("capture_display"))
+            previous = self.heartbeats.get(node, {})
+            hardware = msg.get("hardware", {})
+            old_hardware = previous.get("hardware", {})
+            if hardware.get("boot_id") and old_hardware.get("boot_id") and hardware["boot_id"] != old_hardware["boot_id"]:
+                self.events.record("rebooted", node, boot_id=hardware["boot_id"])
+            if hardware.get("faults") != old_hardware.get("faults"):
+                self.events.record("hardware_faults", node, faults=hardware.get("faults", []))
+            for field in ("playback_error", "display_error"):
+                if msg.get(field) != previous.get(field):
+                    self.events.record(field, node, error=msg.get(field))
             self.heartbeats[node] = msg
             off_ms = msg["clock_offset_ns"] / 1e6
             print(f"[hb] {node:6} off={off_ms:+8.3f}ms "
@@ -285,9 +418,18 @@ class Controller:
             await self._broadcast_web({"type": "heartbeat", "hb": msg})
 
     # ---- inbound from web (calibration site) ----------------------------
-    async def _on_web_msg(self, raw):
+    async def _on_web_msg(self, raw, origin=None):
         msg = json.loads(raw)
+        if not isinstance(msg, dict):
+            raise ValueError("WebSocket command must be an object")
         cmd = msg.get("cmd")
+        if isinstance(cmd, str) and cmd.startswith("capture_"):
+            await self.phone_scan.process(origin, msg)
+            return
+        if cmd == "scan" and msg.get("on", True):
+            raise ValueError("Legacy autocalib scanning is retired and must not be used")
+        if cmd not in ("list_media", "autocalibrate"):
+            await self.phone_scan.cancel(f"room command {cmd} interrupted phone scanning")
         if cmd in ("set_mesh", "set_blend", "set_color", "set_source_region"):
             await self._edit(cmd, msg)
         elif cmd == "mesh_delta":
@@ -298,8 +440,12 @@ class Controller:
                                                 "mesh": entry["mesh"]})
             await self._broadcast_web({"type": "entry", "entry": entry})
         elif cmd == "testpattern":
+            if msg.get("on", True) and self.show["playing"]:
+                await self.cmd_stop()
             await self._send_node(msg["node"], msg)
         elif cmd == "identify":
+            if self.show["playing"]:
+                await self.cmd_stop()
             await self._send_node(msg["node"], msg)
         elif cmd == "prepare":
             await self.cmd_prepare(msg.get("show"), msg.get("media"))
@@ -308,17 +454,23 @@ class Controller:
         elif cmd == "stop":
             await self.cmd_stop()
         elif cmd == "blackout":
+            if self.show["playing"]:
+                await self.cmd_stop()
             if msg.get("node"):
                 await self._send_node(msg["node"], {"cmd": "blackout", "on": msg.get("on", True)})
             else:
                 await self.cmd_blackout(msg.get("on", True))
         elif cmd == "scan":
-            # structured-light: tell one node to show a raw gray-code bitplane
+            if msg.get("on", True):
+                raise ValueError("Legacy autocalib scanning is retired and must not be used")
+            # Permit clearing an old pattern during experimental tool cleanup.
             await self._send_node(msg["node"], {
                 "cmd": "scan_show", "axis": msg.get("axis"), "bit": msg.get("bit"),
                 "inverted": msg.get("inverted", False), "on": msg.get("on", True)})
         elif cmd == "play_media":
-            await self.cmd_play_media(msg.get("media"))
+            if self._start_task:
+                self._start_task.cancel()
+            self._start_task = asyncio.create_task(self._play_request(msg.get("media")))
         elif cmd == "list_media":
             await self._broadcast_web({"type": "playlist", "playlist": self.playlist()})
         elif cmd == "add_node":
@@ -341,10 +493,25 @@ class Controller:
             await self.cmd_enroll(msg)
         elif cmd == "autocalibrate":
             asyncio.create_task(self.cmd_autocalibrate(msg))
+        elif cmd == "room_device":
+            try:
+                if msg.get("target", "").startswith(("beamer/", "panorama", "praesi")):
+                    await self.cmd_stop()
+                async with self._room_operation:
+                    await self.devices.command(msg.get("target", ""), msg.get("action", ""))
+                    await self.devices.refresh()
+                    await self._broadcast_web({"type": "room_devices", "devices": self.devices.snapshot})
+            except Exception as exc:
+                await self._broadcast_web({"type": "error", "message": str(exc)})
         elif cmd == "hibernate":
-            await self.cmd_hibernate()
+            try:
+                await self.cmd_hibernate()
+            except Exception as exc:
+                await self._broadcast_web({"type": "error", "message": str(exc)})
         elif cmd == "wake":
-            await self.cmd_wake()
+            if self._start_task:
+                self._start_task.cancel()
+            self._start_task = asyncio.create_task(self._wake_request())
         elif cmd == "save":
             self.room.save(msg.get("message", "calibration save"))
             await self._broadcast_web({"type": "saved",
@@ -355,8 +522,15 @@ class Controller:
                  "set_color": "color", "set_source_region": "source_region"}[cmd]
         node = msg["node"]
         value = msg[field]
+        validate_field(field, value)
+        candidate = self.room.entry_for(node)
+        if candidate is None:
+            raise ValueError('unknown calibration node: ' + str(node))
+        candidate[field] = copy.deepcopy(value)
+        if self._session and self._media_plan and field in ('mesh', 'source_region'):
+            validate_tile_coverage(candidate, self._media_plan['nodes'][node]['region'])
         self.room.update_field(node, field, value)
-        # live: node updates its shader and the next preview frame + the wall
+        # Live edits update the projector shader.
         await self._send_node(node, {"cmd": cmd, "node": node, field: value})
         await self._broadcast_web({"type": "entry", "entry": self.room.entry_for(node)})
 
@@ -367,148 +541,257 @@ class Controller:
         await self._broadcast_web({"type": "entry", "entry": entry})
 
     # ---- show control ----------------------------------------------------
+    async def _cancel_frame_task(self):
+        task, self._frame_task = self._frame_task, None
+        if task and task is not asyncio.current_task():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                # Awaiting the cancelled frame loop also receives cancellation
+                # directed at this caller. Do not swallow the latter: node
+                # receivers and shutdown gathers must still be able to exit.
+                if asyncio.current_task().cancelling():
+                    raise
+        self._coordinator = None
+
+    async def _fail_session(self, error):
+        self.events.record("session_failed", error=error, session=self._session)
+        await self._cancel_frame_task()
+        self.show.update(playing=False, state="error", error=error)
+        self._session = None
+        self._ready_event.set()
+        # Hold the last displayed frame, cancel outstanding commits everywhere.
+        await self._broadcast_nodes({"cmd": "stop"})
+        await self._broadcast_web({"type": "show", "show": self.show})
+        await self._broadcast_web({"type": "error", "message": error})
+        print(f"[ctl] frame session failed: {error}")
+
+    async def _play_request(self, media):
+        try:
+            await self.cmd_play_media(media)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            await self._fail_session(str(exc))
+
     async def cmd_prepare(self, show: Optional[str], media: Optional[str]):
-        self.show["show"] = show or self.room.model.get("show", "phase0")
-        self.show["media"] = media or self.room.model.get("media", "pan.mp4")
-        await self._broadcast_nodes({"cmd": "prepare", "show": self.show["show"],
-                                     "slice": self.show["media"]})
-        print(f"[ctl] prepared show={self.show['show']} media={self.show['media']}")
+        if getattr(self, "phone_scan", None):
+            await self.phone_scan.cancel("video preparation interrupted phone scanning")
+        await self._cancel_frame_task()
+        await self._broadcast_nodes({"cmd": "stop"})
+        self._session = None
+        self.show.update(playing=False, state="preparing", error=None,
+                         source_width=None, source_height=None, media_mode=None)
+        self._members = self.room.nodes()
+        if not self._members:
+            raise RuntimeError("no render nodes are enrolled")
+        missing = sorted(set(self._members) - self.nodes.keys())
+        if missing:
+            raise RuntimeError("cannot start a frame-locked show; disconnected: " + ", ".join(missing))
+        legacy = [n for n in self._members if self.node_info[n].get("protocol", 1) != PROTOCOL_VERSION]
+        if legacy:
+            raise RuntimeError("upgrade nodes to frame protocol v2: " + ", ".join(legacy))
+        media = media or self.room.model.get("media", "pan.mp4")
+        if Path(media).name != media:
+            raise ValueError("media must be a plain filename")
+        plan = await asyncio.to_thread(load_plan, self.media_dir, media, self._members)
+        for node in self._members:
+            validate_tile_coverage(self.room.entry_for(node), plan['nodes'][node]['region'])
+        if plan["spec"]:
+            unsupported = [n for n in self._members if "per_node_video_v1" not in self.node_info[n].get("capabilities", [])]
+            if unsupported:
+                raise RuntimeError("upgrade nodes for per-projector video: " + ", ".join(unsupported))
+        self._media_plan = plan
+        sha = plan["sha256"]
+        self._session = uuid.uuid4().hex
+        self.events.record("preparing", session=self._session, media=media, members=self._members)
+        self._ready_nodes = {}
+        self._frame_status = {}
+        self._frame_receipts = {}
+        self._ready_event.clear()
+        self.show.update(show=show or self.room.model.get("show", "show"), media=media,
+                         protocol=PROTOCOL_VERSION, session=self._session, sha256=sha,
+                         base_time_ns=None, loop_epoch_ns=None, holds=0,
+                         committed_sequence=-1, presentation_skew_ns=None,
+                         max_presentation_skew_ns=0)
+        await self._broadcast_web({"type": "show", "show": self.show})
+        for node in self._members:
+            asset = plan["nodes"][node]
+            await self._send_node(node, {"cmd": "prepare", "protocol": PROTOCOL_VERSION,
+                "session": self._session, "slice": asset["file"], "sha256": asset["sha256"],
+                "video_region": asset["region"], "clock_port": self.clock_port})
 
     async def cmd_play(self):
-        base = now_ns() + LEAD_NS
-        self.show["base_time_ns"] = base
-        # The loop epoch is the play base time: every node derives the same
-        # target media position as (clock_now - epoch) mod clip_duration, so 12
-        # loops stay phase-aligned over a long run instead of fanning apart.
-        self.show["loop_epoch_ns"] = base
-        self.show["playing"] = True
-        await self._broadcast_nodes({"cmd": "play_at", "base_time_ns": base,
-                                     "loop_epoch_ns": base,
-                                     "clock_port": self.clock_port})
-        print(f"[ctl] play_at base={base} (lead {LEAD_NS/1e6:.0f}ms) "
-              f"to {len(self.nodes)} nodes")
+        if getattr(self, "phone_scan", None):
+            await self.phone_scan.cancel("video playback interrupted phone scanning")
+        if not self._session:
+            await self.cmd_prepare(None, self.show.get("media"))
+        session = self._session
+        deadline = asyncio.get_running_loop().time() + 120
+        while set(self._ready_nodes) != set(self._members):
+            if session != self._session:
+                raise RuntimeError(self.show.get("error") or "preparation was cancelled")
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                raise RuntimeError("prepare timed out; waiting for " + ", ".join(set(self._members) - self._ready_nodes.keys()))
+            self._ready_event.clear()
+            try:
+                await asyncio.wait_for(self._ready_event.wait(), min(remaining, 1))
+            except asyncio.TimeoutError:
+                pass
+        if session != self._session:
+            raise RuntimeError("preparation was cancelled")
+        specs = [VideoSpec(**{k: self._ready_nodes[n][k] for k in ("fps_num", "fps_den", "frames", "sha256")})
+                 for n in self._members]
+        timing = lambda spec: (spec.fps_num, spec.fps_den, spec.frames)
+        for node, spec in zip(self._members, specs):
+            asset = self._media_plan["nodes"][node]
+            if spec.sha256 != asset["sha256"] or timing(spec) != timing(specs[0]):
+                raise RuntimeError(f"{node} disagrees on video content, frame rate or frame count")
+            declared = self._media_plan["spec"]
+            if declared and timing(spec) != (declared["fps_num"], declared["fps_den"], declared["frames"]):
+                raise RuntimeError(f"{node} video timing disagrees with its tile manifest")
+            if declared and any(self._ready_nodes[node][k] != asset[k] for k in ("width", "height")):
+                raise RuntimeError(f"{node} video resolution disagrees with its tile manifest")
+        show_spec = VideoSpec(specs[0].fps_num, specs[0].fps_den, specs[0].frames, self.show["sha256"])
+        self._coordinator = FrameCoordinator(self._members, show_spec, lead_ns=LEAD_NS, max_ahead=3, require_staged=True)
+        for node, status in self._frame_status.items():
+            self._coordinator.report(node, status["buffered_first"], status["buffered_last"], status["presented"], status["received"])
+        self.show.update(media_mode="tiles" if self._media_plan["spec"] else "panorama",
+                         source_width=self._ready_nodes[self._members[0]]["width"],
+                         source_height=self._ready_nodes[self._members[0]]["height"],
+                         playing=True, state="playing", fps_num=specs[0].fps_num,
+                         fps_den=specs[0].fps_den, frames=specs[0].frames)
+        self._frame_task = asyncio.create_task(self._frame_loop(session))
         await self._broadcast_web({"type": "show", "show": self.show})
 
+    async def _frame_loop(self, session):
+        started = time.monotonic()
+        stalled_since = None
+        last_progress = 0
+        try:
+            while session == self._session:
+                master = self._coordinator
+                missing = master.missing()
+                if missing and time.monotonic() - started > 2:
+                    raise RuntimeError("frame status lost from " + ", ".join(missing))
+                reservation = master.reserve() if not missing else None
+                if reservation:
+                    self.trace.record("reserve", **reservation, clock_ns=now_ns(), ready=dict(master.ready), presented=dict(master.presented))
+                if reservation:
+                    for node in self._members:
+                        await self._send_node(node, {"cmd": "stage_frame", "session": session, **reservation})
+                old_holds = master.holds
+                commit = master.commit(now_ns()) if not missing else None
+                if commit:
+                    self.trace.record("commit", **commit, clock_ns=now_ns(), holds=master.holds, held=master.holds != old_holds, ready=dict(master.ready), staged=dict(master.staged), presented=dict(master.presented))
+                if commit:
+                    if self.show["base_time_ns"] is None:
+                        self.show["base_time_ns"] = commit["present_at_ns"]
+                    for node in self._members:
+                        await self._send_node(node, {"cmd": "commit_frame", "session": session, **commit})
+                    self.show["committed_sequence"] = commit["sequence"]
+                    self.show["holds"] = master.holds
+                    stalled_since = None
+                else:
+                    # The bounded horizon normally waits for vblank acknowledgements.
+                    # Lack of any progress for 2s is an explicit fleet failure.
+                    stalled_since = stalled_since or time.monotonic()
+                    if time.monotonic() - stalled_since > 2:
+                        raise RuntimeError("frame readiness barrier stalled")
+                if time.monotonic() - last_progress > .5:
+                    await self._broadcast_web({"type": "frame_status", "session": session,
+                        "committed": master.sequence - 1, "presented": master.presented,
+                        "holds": master.holds,
+                        "presentation_skew_ns": self.show.get("presentation_skew_ns"),
+                        "max_presentation_skew_ns": self.show.get("max_presentation_skew_ns")})
+                    last_progress = time.monotonic()
+                await asyncio.sleep(.002)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            await self._fail_session(str(exc))
+
+    @managed_start
     async def cmd_play_media(self, media: str) -> dict:
-        """Select a video and start it synced across all nodes — the action
-        behind the Node-RED POST /api/play endpoint."""
-        media = media or self.room.model.get("media", "pan.mp4")
-        await self.cmd_prepare(self.show.get("show", "show"), media)
-        await asyncio.sleep(0.3)
-        await self.cmd_play()
-        return {"playing": True, "media": media, "nodes": list(self.nodes.keys())}
+        await self.cmd_stop()
+        async with self._room_operation:
+            if self.devices.base:
+                self.show.update(state="waiting_projectors", playing=False)
+                await self._broadcast_web({"type": "show", "show": self.show})
+                await self.devices.ready(self._broadcast_web)
+                await self._wake_nodes()
+            await self.cmd_prepare(self.show.get("show"), media)
+            await self.cmd_play()
+        return {"playing": True, "media": self.show["media"], "nodes": self._members}
 
     async def cmd_autocalibrate(self, opts: dict):
-        """Run structured-light auto-calibration from the website: drive each
-        connected node's gray-code scan, capture from the control node's camera,
-        decode + solve, and push the result. Progress streams to web clients."""
-        def emit(stage, pct=None, **kw):
-            return self._broadcast_web({"type": "autocalib", "stage": stage,
-                                        "pct": pct, **kw})
-        try:
-            import cv2
-        except Exception:
-            await emit("error", msg="opencv not available on the control node")
-            return
-        import sys
-        from pathlib import Path
-        sys.path.insert(0, str(Path(__file__).resolve().parent / "autocalib"))
-        import graycode, solve as solver
-
-        PW, PH = (int(x) for x in str(opts.get("proj", "1920x1080")).lower().split("x"))
-        cols, rows = int(opts.get("cols", 4)), int(opts.get("rows", 4))
-        ring = bool(opts.get("ring", True))
-        settle = float(opts.get("settle_s", 0.3))
-        order = opts.get("nodes") or [n for n in self.room.nodes() if n in self.nodes]
-        if not order:
-            await emit("error", msg="no connected nodes to scan"); return
-
-        loop = asyncio.get_event_loop()
-        cap = cv2.VideoCapture(int(opts.get("camera", 0)))
-        if not cap.isOpened():
-            await emit("error", msg="camera did not open"); return
-
-        def grab():
-            import time
-            time.sleep(settle)
-            for _ in range(4):
-                cap.read()
-            ok, frame = cap.read()
-            if not ok:
-                raise RuntimeError("camera read failed")
-            return cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY).astype("float32")
-
-        try:
-            await emit("starting", 0, nodes=order)
-            seq = list(graycode.scan_sequence(PW, PH))
-            total = len(order) * len(seq)
-            done = 0
-            scans, cam_shape = {}, None
-            for node in order:
-                for other in order:
-                    if other != node:
-                        await self._send_node(other, {"cmd": "blackout", "on": True})
-                captures = {}
-                for name, axis, bit, inv in seq:
-                    await self._send_node(node, {"cmd": "scan_show", "axis": axis,
-                                                 "bit": bit, "inverted": inv, "on": True})
-                    gray = await loop.run_in_executor(None, grab)
-                    captures[name] = gray
-                    cam_shape = gray.shape
-                    done += 1
-                    await emit(f"scanning {node}", int(done / total * 100))
-                await self._send_node(node, {"cmd": "scan_show", "on": False})
-                for other in order:
-                    if other != node:
-                        await self._send_node(other, {"cmd": "blackout", "on": False})
-                scans[node] = graycode.decode(captures, PW, PH)
-            await emit("solving", 100)
-            entries = solver.solve(scans, cam_shape, PW, PH, cols=cols, rows=rows,
-                                   ring=ring, order=order)
-            for e in entries:
-                for field in ("source_region", "mesh", "blend"):
-                    self.room.update_field(e["node"], field, e[field])
-                    cmd = {"source_region": "set_source_region", "mesh": "set_mesh",
-                           "blend": "set_blend"}[field]
-                    await self._send_node(e["node"], {"cmd": cmd, "node": e["node"],
-                                                      field: e[field]})
-            self.room.save("auto-calibration (website)")
-            await self._broadcast_room()
-            await emit("done", 100, nodes=order)
-            print(f"[ctl] auto-calibration complete for {order}")
-        except Exception as e:
-            await emit("error", msg=str(e))
-            print(f"[ctl] auto-calibration failed: {e}")
-        finally:
-            cap.release()
+        """Legacy scanner is retired; camera calibration needs a new pipeline."""
+        await self._broadcast_web({"type":"autocalib", "stage":"error",
+            "msg":"Legacy autocalib is retired and must not be used. Seamcal remains experimental; a validated phone-scan workflow is not available yet."})
 
     def playlist(self) -> dict:
-        """Videos available to play (from the control node's media dir)."""
+        """Playable shows; complete tile packages own their constituent clips."""
         vids = []
+        owners = {}
         if self.media_dir.exists():
             vids = sorted(p.name for p in self.media_dir.iterdir()
-                          if p.suffix.lower() in (".mp4", ".mov", ".mkv", ".h264"))
+                          if p.is_file() and (p.suffix.lower() in (".mp4", ".mov", ".mkv", ".h264") or p.name.endswith(".immersive.json")))
+            for name in vids:
+                if not name.endswith('.immersive.json'):
+                    continue
+                try:
+                    package = json.loads((self.media_dir/name).read_text())
+                    members = package.get('nodes')
+                    if not isinstance(members, dict) or not members:
+                        continue
+                    plan = load_plan(self.media_dir, name, list(members))
+                except (OSError, ValueError, TypeError, AttributeError):
+                    continue  # A damaged/incomplete manifest cannot hide videos.
+                for asset in plan['nodes'].values():
+                    owners.setdefault(asset['file'], name)
+            vids = [name for name in vids if name not in owners]
+        current = self.show.get("media")
         return {"media_dir": str(self.media_dir), "videos": vids,
-                "current": self.show.get("media"), "playing": self.show.get("playing")}
+                "current": owners.get(current, current), "playing": self.show.get("playing")}
 
     async def cmd_stop(self):
-        self.show["playing"] = False
+        if getattr(self, "phone_scan", None):
+            await self.phone_scan.cancel("playback stop interrupted phone scanning")
+        if self._start_task and self._start_task is not asyncio.current_task():
+            self._start_task.cancel()
+        await self._cancel_frame_task()
+        self._session = None
+        self._ready_event.set()
+        self.show.update(playing=False, state="stopped")
         await self._broadcast_nodes({"cmd": "stop"})
         await self._broadcast_web({"type": "show", "show": self.show})
         print("[ctl] stop")
 
     async def cmd_blackout(self, on: bool):
+        if getattr(self, "phone_scan", None):
+            await self.phone_scan.cancel("blackout command interrupted phone scanning")
         await self._broadcast_nodes({"cmd": "blackout", "on": on})
         print(f"[ctl] blackout {'on' if on else 'off'}")
 
     # ---- hibernation (driven by Node-RED via the REST API) ---------------
     async def cmd_hibernate(self):
+        await self.cmd_stop()
+        async with self._room_operation:
+            if self.devices.base:
+                await self.devices.command("panorama", "off")
+                await self.devices.command("praesi", "off")
+            return await self._hibernate_nodes()
+
+    async def _hibernate_nodes(self):
         """Put the room to sleep with a real power-down. Render nodes blank and
         clean-poweroff themselves; then the configured power backend cuts their
         power. The control node stays up to receive the wake call."""
         if self.power_state == "hibernating":
             return {"state": "hibernating", "note": "already hibernating"}
         self._was_playing = self.show.get("playing", False)
+        await self.cmd_stop()
         self.power_state = "hibernating"
         self.show["playing"] = False
         if self.power.can_wake:
@@ -537,7 +820,20 @@ class Controller:
         for node in self.room.nodes():
             await self.power.power_off(node)
 
+    async def _wake_request(self):
+        try:
+            await self.cmd_wake()
+        except Exception as exc:
+            await self._broadcast_web({"type": "error", "message": str(exc)})
+
+    @managed_start
     async def cmd_wake(self):
+        async with self._room_operation:
+            if self.devices.base:
+                await self.devices.ready(self._broadcast_web)
+            return await self._wake_nodes()
+
+    async def _wake_nodes(self):
         """Wake the room: restore switched power so the nodes cold-boot, wait for
         them to rejoin, then resume the show if it was playing."""
         if self.power_state == "awake":
@@ -558,10 +854,6 @@ class Controller:
         await self._broadcast_nodes({"cmd": "wake"})
         self.power_state = "awake"
         await self._broadcast_web({"type": "power", "state": "awake", "mode": "standby"})
-        if self._was_playing:
-            await self.cmd_prepare(None, None)
-            await asyncio.sleep(0.5)
-            await self.cmd_play()
         print(f"[ctl] WAKE (standby): {len(self.nodes)} nodes resumed")
         return {"state": "awake", "mode": "standby",
                 "resume_play": self._was_playing}
@@ -574,9 +866,7 @@ class Controller:
             deadline -= 1.0
         await self._broadcast_web({"type": "power", "state": "awake"})
         if self._was_playing:
-            await self.cmd_prepare(None, None)
-            await asyncio.sleep(0.5)
-            await self.cmd_play()
+            await self.cmd_play_media(self.show.get("media"))
         print(f"[ctl] awake: {len(self.nodes)}/{len(want)} nodes back"
               f"{' , show resumed' if self._was_playing else ''}")
 
@@ -587,7 +877,14 @@ class Controller:
             "can_wake": self.power.can_wake,
             "nodes_up": list(self.nodes.keys()),
             "was_playing": self._was_playing,
+            "room_devices": self.devices.snapshot,
         }
+
+    async def _device_status_loop(self):
+        while True:
+            await self.devices.refresh()
+            await self._broadcast_web({"type": "room_devices", "devices": self.devices.snapshot})
+            await asyncio.sleep(3)
 
     # ---- plumbing --------------------------------------------------------
     async def _push_entry(self, node: str):
@@ -646,12 +943,20 @@ class Controller:
                                    "playlist": self.playlist()})
 
     async def _broadcast_web(self, obj: dict):
+        if not self.webs or obj.get("preview"):
+            return
         data = json.dumps(obj)
         for ws in list(self.webs):
             try:
-                await ws.send(data)
-            except ConnClosed:
-                self.webs.discard(ws)
+                self._web_out[ws].put_nowait(data)
+            except asyncio.QueueFull:
+                # A slow tablet must never stall the frame coordinator. It can
+                # skip replaceable telemetry; a reconnect restores full state.
+                if obj.get("preview") or obj.get("type") in ("heartbeat", "frame_status"):
+                    continue
+                asyncio.create_task(ws.close())
+            except KeyError:
+                continue
 
     # ---- autoplay + CLI --------------------------------------------------
     async def autoplay(self):
@@ -694,12 +999,14 @@ class Controller:
     async def run(self, autoplay: bool):
         self._loop = asyncio.get_event_loop()
         _start_http(self)
-        async with websockets.serve(self.handler, "0.0.0.0", self.ws_port,
-                                    max_size=4 * 1024 * 1024):
+        # Keep transport CPU work off the frame barrier's timing budget.
+        async with websockets.serve(self.handler, ["0.0.0.0", "::"], self.ws_port,
+                                    compression=None, max_size=4 * 1024 * 1024):
             print(f"[ctl] WebSocket broker on ws/{self.ws_port}, "
                   f"web UI on http://0.0.0.0:{self.http_port}")
             tasks = [asyncio.create_task(self.cli()),
-                     asyncio.create_task(self._mdns_browse_loop())]
+                     asyncio.create_task(self._mdns_browse_loop()),
+                     asyncio.create_task(self._device_status_loop())]
             if autoplay:
                 tasks.append(asyncio.create_task(self.autoplay()))
             await asyncio.gather(*tasks)
@@ -739,7 +1046,13 @@ class _ApiHandler(SimpleHTTPRequestHandler):
 
     def _call(self, coro):
         fut = asyncio.run_coroutine_threadsafe(coro, self.controller._loop)
-        return fut.result(timeout=30)
+        try:
+            # Projector warm-up precedes the decoder's 120-second prepare gate.
+            timeout = float(self.controller.devices.config.get("ready_timeout_s", 180)) + 150
+            return fut.result(timeout=timeout)
+        except concurrent.futures.TimeoutError:
+            fut.cancel()
+            raise TimeoutError("Room operation timed out and was cancelled") from None
 
     def _param(self, key: str):
         """Read a param from the query string or a JSON body."""
@@ -756,9 +1069,25 @@ class _ApiHandler(SimpleHTTPRequestHandler):
         return None
 
     def do_POST(self):
-        if not self.path.startswith("/api/"):
-            self.send_error(404); return
+        try:
+            self._post()
+        except concurrent.futures.CancelledError:
+            self._json(409, {"error": "Room operation cancelled"})
+        except TimeoutError as exc:
+            self._json(504, {"error": str(exc)})
+        except ValueError as exc:
+            self._json(400, {"error": str(exc)})
+        except RuntimeError as exc:
+            self._json(409, {"error": str(exc)})
+        except Exception as exc:
+            self._json(500, {"error": str(exc)})
+
+    def _post(self):
         path = self.path.split("?", 1)[0]
+        if path.startswith("/admin/api/"):
+            path = path[len("/admin"):]
+        if not path.startswith("/api/"):
+            self.send_error(404); return
         c = self.controller
         # Upload is the one POST the browser UI makes; it can't carry the token,
         # and the WebSocket control plane on the trusted net is already open.
@@ -797,25 +1126,32 @@ class _ApiHandler(SimpleHTTPRequestHandler):
 
     def _upload(self):
         """POST /api/upload?name=<file> with the video as the raw body."""
-        import os, re
+        import os, re, tempfile
         from urllib.parse import urlparse, parse_qs, unquote
         c = self.controller
         name = os.path.basename(unquote(parse_qs(urlparse(self.path).query)
                                         .get("name", [""])[0]))
-        if not re.match(r'^[\w.\- ]+\.(mp4|mov|mkv|h264)$', name, re.I):
+        if not re.match(r'^[\w.\- ]+\.(mp4|mov|mkv|h264|immersive\.json)$', name, re.I):
             self._json(400, {"error": "filename must be a video (mp4/mov/mkv/h264)"})
             return
         n = int(self.headers.get("Content-Length", 0) or 0)
         if n <= 0:
             self._json(400, {"error": "empty upload"}); return
         dst = c.media_dir / name
-        with open(dst, "wb") as f:
-            left = n
-            while left:
-                chunk = self.rfile.read(min(left, 1 << 20))
-                if not chunk:
-                    break
-                f.write(chunk); left -= len(chunk)
+        descriptor, temporary = tempfile.mkstemp(dir=c.media_dir, prefix='.upload-', suffix='.part')
+        try:
+            with os.fdopen(descriptor, "wb") as f:
+                left = n
+                while left:
+                    chunk = self.rfile.read(min(left, 1 << 20))
+                    if not chunk:
+                        raise ValueError('upload ended before all declared bytes arrived')
+                    f.write(chunk); left -= len(chunk)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temporary, dst)
+        finally:
+            Path(temporary).unlink(missing_ok=True)
         print(f"[ctl] uploaded {name} ({n} bytes)")
         asyncio.run_coroutine_threadsafe(
             c._broadcast_web({"type": "playlist", "playlist": c.playlist()}), c._loop)
@@ -825,13 +1161,15 @@ class _ApiHandler(SimpleHTTPRequestHandler):
         import os, shutil
         from urllib.parse import unquote
         f = self.controller.media_dir / os.path.basename(unquote(name))
-        if not f.exists():
+        try:
+            fh = open(f, "rb")
+        except (FileNotFoundError, IsADirectoryError):
             self.send_error(404); return
-        self.send_response(200)
-        self.send_header("Content-Type", "video/mp4")
-        self.send_header("Content-Length", str(f.stat().st_size))
-        self.end_headers()
-        with open(f, "rb") as fh:
+        with fh:
+            self.send_response(200)
+            self.send_header("Content-Type", "video/mp4")
+            self.send_header("Content-Length", str(os.fstat(fh.fileno()).st_size))
+            self.end_headers()
             shutil.copyfileobj(fh, self.wfile)
 
     # ---- per-node admin (Basic auth, same page every node serves) --------
@@ -840,11 +1178,20 @@ class _ApiHandler(SimpleHTTPRequestHandler):
                                 self.controller.admin_password):
             return True
         self.send_response(401)
-        self.send_header("WWW-Authenticate", 'Basic realm="immersive"')
+        self.send_header("WWW-Authenticate", 'Basic realm="immersive", charset="UTF-8"')
+        self.send_header("Content-Length", "0")
         self.end_headers()
         return False
 
     def _admin_get(self, path) -> bool:
+        if path == "/admin":
+            self.send_response(302)
+            self.send_header("Location", "/admin/")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return True
+        if path.startswith("/admin/api/"):
+            path = path[len("/admin"):]
         if path in ("/admin", "/admin/"):
             if not self._basic_ok():
                 return True
@@ -863,10 +1210,21 @@ class _ApiHandler(SimpleHTTPRequestHandler):
                 self._json(200, {"config": nodeadmin.read_bootconfig(),
                                  "editable": nodeadmin.EDITABLE})
             return True
+        if path == "/api/diagnostics":
+            if self._basic_ok():
+                self._json(200, {"show": self.controller.show,
+                    "nodes_up": list(self.controller.nodes),
+                    "heartbeats": self.controller.heartbeats,
+                    "node_info": self.controller.node_info,
+                    "events": list(self.controller.events.events)})
+            return True
         return False
 
     def do_GET(self):
         path = self.path.split("?", 1)[0]
+        if path == "/ws":
+            self._proxy_websocket()
+            return
         if self._admin_get(path):
             return
         if path.startswith("/media/"):
@@ -886,6 +1244,32 @@ class _ApiHandler(SimpleHTTPRequestHandler):
             return
         super().do_GET()
 
+    def _proxy_websocket(self):
+        """Expose browser control on the same origin/port as the web page."""
+        import select
+        import socket
+        if self.headers.get("Upgrade", "").lower() != "websocket":
+            self.send_error(400, "WebSocket upgrade required")
+            return
+        self.close_connection = True
+        try:
+            with socket.create_connection(("127.0.0.1", self.controller.ws_port), timeout=5) as backend:
+                backend.settimeout(None)
+                headers = ["GET / HTTP/1.1", f"Host: 127.0.0.1:{self.controller.ws_port}"]
+                headers += [f"{key}: {value}" for key, value in self.headers.items()
+                            if key.lower() not in ("host", "authorization", "cookie")]
+                backend.sendall(("\r\n".join(headers) + "\r\n\r\n").encode("latin-1"))
+                while True:
+                    readable, _, _ = select.select([self.connection, backend], [], [], 30)
+                    for source in readable:
+                        data = source.recv(65536)
+                        if not data:
+                            return
+                        target = backend if source is self.connection else self.connection
+                        target.sendall(data)
+        except (OSError, ValueError):
+            return
+
     def log_message(self, *a):
         pass  # quiet; the controller prints its own lines
 
@@ -896,7 +1280,7 @@ def _start_http(controller: "Controller"):
     handler = functools.partial(_ApiHandler, directory=str(WEB_DIR))
     # bind the controller onto the handler class the partial wraps
     _ApiHandler.controller = controller
-    httpd = ThreadingHTTPServer(("0.0.0.0", controller.http_port), handler)
+    httpd = make_http_server(controller.http_port, handler)
     t = threading.Thread(target=httpd.serve_forever, daemon=True)
     t.start()
 

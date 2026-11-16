@@ -1,0 +1,15 @@
+#!/bin/sh
+# Install staged firmware without replacing this card's provisioning identity.
+set -eu
+STAGED=$1
+BOOT=$2
+FALLBACK=${3:-/etc/immersive.conf}
+if [ -f "$BOOT/immersive.conf" ]; then
+    install -m 0644 "$BOOT/immersive.conf" "$STAGED/immersive.conf"
+elif [ -f "$FALLBACK" ]; then
+    install -m 0644 "$FALLBACK" "$STAGED/immersive.conf"
+else
+    echo "No device configuration to preserve; refusing boot update" >&2
+    exit 1
+fi
+cp -rf "$STAGED"/. "$BOOT"/

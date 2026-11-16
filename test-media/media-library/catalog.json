@@ -1,0 +1,83 @@
+{
+  "sources": [
+    {
+      "id": "drone-inspire2-8k",
+      "title": "360\u00b0 drone flight \u2014 DJI Inspire 2 / Insta360 Pro 2",
+      "kind": "drone",
+      "creator": "KinoLet",
+      "license": "CC BY 3.0",
+      "license_url": "https://creativecommons.org/licenses/by/3.0/",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Test_Insta360_Pro2_on_DJI_Inspire2_8K_59,9_fps_-_YouTube.webm",
+      "file": "drone-inspire2-8k.webm",
+      "attribution": "KinoLet \u2014 Test Insta360 Pro2 on DJI Inspire2 8K 59,9 fps; CC BY 3.0; room version geometrically remapped, cropped to wall view, resampled and silent.",
+      "directory": "media-library",
+      "download_url": "https://upload.wikimedia.org/wikipedia/commons/c/c8/Test_Insta360_Pro2_on_DJI_Inspire2_8K_59%2C9_fps_-_YouTube.webm",
+      "projection": "eac",
+      "projection_review": "Verified against decoded full frames: equi-angular cubemap, not equirectangular despite 2:1 dimensions."
+    },
+    {
+      "id": "nasa-alaska-glaciers-5120",
+      "title": "Fly Above Alaskan Glaciers in 360 \u2014 extended",
+      "kind": "aircraft flight",
+      "creator": "NASA\u2019s Goddard Space Flight Center; Jefferson Beck",
+      "license": "NASA public-domain material",
+      "license_url": "https://www.nasa.gov/nasa-brand-center/images-and-media/",
+      "source_page": "https://svs.gsfc.nasa.gov/13711/",
+      "file": "nasa-alaska-glaciers-5120.webm",
+      "attribution": "Fly Above Alaskan Glaciers in 360 \u2014 extended \u2014 NASA\u2019s Goddard Space Flight Center; Jefferson Beck. Source: https://svs.gsfc.nasa.gov/13711/. License: https://www.nasa.gov/nasa-brand-center/images-and-media/. Room conversion: geometry remapping, wall-view crop, frame-rate resampling and silent output.",
+      "directory": "media-library",
+      "download_url": "https://svs.gsfc.nasa.gov/vis/a010000/a013700/a013711/OIB_Alaska_360_Edited_Final.webm",
+      "projection": "equirect"
+    },
+    {
+      "id": "paragliding-tolmin-5760",
+      "title": "Mountain paragliding above Tolmin",
+      "kind": "paragliding",
+      "creator": "Sokole ONE",
+      "license": "CC BY 3.0",
+      "license_url": "https://creativecommons.org/licenses/by/3.0/",
+      "source_page": "https://commons.wikimedia.org/wiki/File:2021_06_12_PARA_360_Tolmin_SokoleONE_2_-_UP_Kangri.webm",
+      "file": "paragliding-tolmin-5760.webm",
+      "attribution": "Mountain paragliding above Tolmin \u2014 Sokole ONE. Source: https://commons.wikimedia.org/wiki/File:2021_06_12_PARA_360_Tolmin_SokoleONE_2_-_UP_Kangri.webm. License: https://creativecommons.org/licenses/by/3.0/. Room conversion: geometry remapping, wall-view crop, frame-rate resampling and silent output.",
+      "directory": "media-library",
+      "download_url": "https://upload.wikimedia.org/wikipedia/commons/a/a3/2021_06_12_PARA_360_Tolmin_SokoleONE_2_-_UP_Kangri.webm",
+      "expected_sha1": "f54f7ff8c49be60508e52e5d8143dfc653fc7a4d",
+      "expected_download_bytes": 71438393,
+      "projection": "equirect"
+    },
+    {
+      "id": "noaa-serengeti",
+      "title": "Serengeti of the Sea \u2014 full underwater 360\u00b0",
+      "kind": "underwater",
+      "creator": "NOAA Office of National Marine Sanctuaries",
+      "license": "NOAA public information; see reuse notice",
+      "license_url": "https://sanctuaries.noaa.gov/disclaimer.html",
+      "source_page": "https://sanctuaries.noaa.gov/vr/monterey-bay/serengeti/",
+      "directory": "underwater-source",
+      "file": "noaa-serengeti-full-360.mp4",
+      "archive_file": "noaa-serengeti-360.mp4.zip",
+      "archive_member": "explore-the-blue-360-serengeti-of-the-sea.mp4",
+      "download_url": "https://sanctuaries.noaa.gov/media/vr/explore-the-blue-360-serengeti-of-the-sea.mp4.zip",
+      "expected_download_bytes": 2579077044,
+      "download_md5_base64": "E33EYSwRpE8Ju3elVHJNhw==",
+      "attribution": "NOAA Office of National Marine Sanctuaries \u2014 Explore the Blue: 360\u00b0 Serengeti of the Sea. Room version geometrically mapped, wall-view cropped, resampled and silent.",
+      "projection": "equirect"
+    },
+    {
+      "id": "noaa-sea-lion",
+      "title": "Sea Lion Encounter \u2014 Channel Islands kelp forest",
+      "kind": "underwater",
+      "creator": "NOAA Office of National Marine Sanctuaries",
+      "license": "NOAA public information; see reuse notice",
+      "license_url": "https://sanctuaries.noaa.gov/disclaimer.html",
+      "source_page": "https://sanctuaries.noaa.gov/vr/channel-islands/sea-lion-encouter/",
+      "directory": "underwater-source",
+      "file": "noaa-sea-lion-kelp-360.mp4",
+      "download_url": "https://sanctuaries.noaa.gov/media/videos/s360-virtual-dive-with-sea-lions-cinms.mp4",
+      "expected_download_bytes": 279754554,
+      "download_md5_base64": "FGbErnkEaRQYWb8R+d1jTQ==",
+      "attribution": "NOAA Office of National Marine Sanctuaries \u2014 Explore the Blue: 360\u00b0 Sea Lion Encounter.",
+      "projection": "equirect"
+    }
+  ]
+}

@@ -14,7 +14,13 @@ flash it and use the website — see `docs/DEPLOY.md`.
   Node-RED power API. Renders no video.
 - **A/B + OTA:** two rootfs slots; a nightly timer pulls the latest encrypted
   GitHub release, flashes the inactive slot, switches `cmdline.txt`, and reboots;
-  a failed boot rolls back. Boot-FAT `immersive.conf` survives the rootfs rewrite.
+  userspace health confirmation can restore the previous root slot. The kernel
+  and firmware on the boot FAT are shared: an unbootable kernel is outside this
+  userspace rollback check. Device configuration, calibration history, media and
+  SSH credentials are carried into the new root slot.
+- **Boot provisioning:** a deploy recipe places `immersive.conf` on the actual
+  WIC boot FAT. Firmware updates preserve the card's existing configuration
+  instead of replacing it with the factory template.
 - **Config without reflashing:** edit `immersive.conf` on the boot partition to
   set a node's role, id, control host, and (control) the Node-RED API token.
 - Silent boot, key-only dropbear SSH, mDNS `<hostname>.local` via avahi.
@@ -30,8 +36,21 @@ cp ~/.ssh/id_ed25519.pub secrets/authorized_keys  # your login key
 ./build.sh
 ```
 
-`build.sh` vendors `render-node/` + `control-node/` into the layer, bumps
-`pi-vX.Y.Z`, and produces in `output/`:
+`build.sh` vendors `render-node/`, `control-node/` and `shared/` using the same
+runtime manifest as deployment. It excludes concrete node configuration,
+calibration and uploaded media. The Dockerfile pins all three Yocto layer
+revisions. PyOpenGL 3.1.10 includes the EGL/GLES2 bindings used by the renderer;
+Linux CMA is explicitly 512 MB, matching the deployed fleet.
+
+Set an explicit candidate version when needed:
+
+```bash
+IMMERSIVE_VERSION=pi-v1.0.8 ./build.sh
+```
+
+The version file changes only after a successful build. Completed artifacts live
+under `output/<version>/`, with compatibility symlinks in `output/`. Previous
+artifacts are retained if a build fails or a version is rebuilt:
 
 | Artifact | Purpose |
 |---|---|
@@ -82,3 +101,44 @@ recipes-bsp/bootfiles/rpi-cmdline.bbappend   silent-boot cmdline
 wic/immersive-ab.wks.in            boot + rootfsA + rootfsB + data
 Dockerfile build.sh release.sh VERSION   Docker build + encrypted release tooling
 ```
+
+The boot-health check accepts an idle renderer, but requires its framebuffer,
+local admin API, expected image version and H.264 hardware-decoder factory.
+A successful build still needs a spare-card boot and projector test before an OS
+release is published; runtime updates do not require reflashing the fleet.
+
+Inspect completed artifacts without mounting them. Set `EXPECTED_RUNTIME_RELEASE`
+to the release identifier produced from the current source by
+`tools/runtime_release.py build`, rather than reading it from the image itself:
+
+```bash
+# Run from the repository root; the builder provides read-only debugfs access.
+docker run --rm --entrypoint python3 -v "$PWD:/workspace:ro" -w /workspace \
+  immersive-yocto tools/verify_image.py \
+  --rootfs yocto/output/pi-v1.0.8/immersive-rootfs.ext4 \
+  --boot yocto/output/pi-v1.0.8/immersive-boot.tar \
+  --release "$EXPECTED_RUNTIME_RELEASE" --version pi-v1.0.8 \
+  --public-key yocto/secrets/authorized_keys
+```
+
+This checks runtime file hashes, version, ARM64 decoder plugins, PyOpenGL,
+operator SSH keys and permissions, PoE configuration, and the 512 MB CMA boot
+argument. It also rejects embedded development calibration and node identity.
+It does not replace the spare-card hardware test.
+
+`tools/verify_flash_image.py` checks the full `.img`, including its partition
+bounds, boot FAT, A-slot selector and installed runtime. Run it in the same
+read-only builder container with `--image`, `--release`, `--version` and
+`--public-key` arguments.
+
+On an ARM64 Linux host, `tools/smoke_image.py` executes the image's Python/GLES
+bindings and software decoder, checks root public-key authentication and rejects
+anonymous login, and exercises the installed partition-table template against a
+disposable file. Run this tool with `--user 0` in the builder container, passing
+`--rootfs` and a native H.264 test clip via `--media`. It extracts into temporary
+container storage and leaves the input artifacts unchanged.
+
+First-boot resize preserves the MBR identifier. It records a pending resize
+before changing the table and checks the kernel's partition offsets before
+growing A or formatting B. If those offsets are stale, it reboots and resumes
+before touching either filesystem. Verify that path on the spare card as well.

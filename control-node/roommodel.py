@@ -13,8 +13,12 @@ import copy
 import json
 import subprocess
 import threading
+import sys
 from pathlib import Path
 from typing import Any, Optional
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from shared.calibration import validate_field
 
 DEFAULT_PATH = Path(__file__).with_name("room-model.json")
 
@@ -46,7 +50,8 @@ def default_node_entry(node: str, projector: str = "") -> dict:
             "top": _default_edge(),
             "bottom": _default_edge(),
         },
-        "color": {"gain": [1.0, 1.0, 1.0], "gamma": 2.2, "lift": [0.0, 0.0, 0.0]},
+        # Video RGB is already encoded: neutral colour trim is identity.
+        "color": {"gain": [1.0, 1.0, 1.0], "gamma": 1.0, "lift": [0.0, 0.0, 0.0]},
     }
 
 
@@ -72,11 +77,16 @@ class RoomModel:
     def save(self, message: str, bump: bool = True, commit: bool = True) -> dict:
         """Write the model, optionally bump version, optionally git-commit."""
         with self._lock:
+            # Reject NaN/Infinity before touching the working model or its file.
+            json.dumps(self.model, allow_nan=False)
+            for entry in self.model.get("nodes", []):
+                for field in ("mesh", "blend", "color", "source_region"):
+                    validate_field(field, entry[field])
             if bump:
                 self.model["version"] = int(self.model.get("version", 0)) + 1
             tmp = self.path.with_suffix(".json.tmp")
             with tmp.open("w") as f:
-                json.dump(self.model, f, indent=2)
+                json.dump(self.model, f, indent=2, allow_nan=False)
                 f.write("\n")
             tmp.replace(self.path)
             if commit:
@@ -153,7 +163,7 @@ class RoomModel:
     # ---- mutations (used by the calibration website) ---------------------
     def update_field(self, node: str, field: str, value: Any) -> Optional[dict]:
         """Replace one of mesh/blend/color/source_region on a node entry."""
-        assert field in ("mesh", "blend", "color", "source_region")
+        validate_field(field, value)
         with self._lock:
             entry = self.ensure_node(node)
             entry[field] = copy.deepcopy(value)
@@ -163,16 +173,21 @@ class RoomModel:
         """Move a single mesh control point — the editor's drag primitive."""
         with self._lock:
             entry = self.ensure_node(node)
-            pts = entry["mesh"]["points"]
+            mesh = copy.deepcopy(entry["mesh"])
+            pts = mesh["points"]
             if 0 <= index < len(pts):
                 pts[index]["x"] = x
                 pts[index]["y"] = y
+                validate_field("mesh", mesh)
+                entry["mesh"] = mesh
             return copy.deepcopy(entry)
 
     def set_mesh_resolution(self, node: str, cols: int, rows: int) -> dict:
         """Resample the node's mesh to cols x rows, preserving the current warp
         by bilinear interpolation of the existing control grid. Raising
         resolution adds steerable points only where a surface needs them."""
+        if not isinstance(cols, int) or not isinstance(rows, int) or not 2 <= cols <= 64 or not 2 <= rows <= 64:
+            raise ValueError("mesh dimensions must be between 2 and 64")
         with self._lock:
             entry = self.ensure_node(node)
             old = entry["mesh"]

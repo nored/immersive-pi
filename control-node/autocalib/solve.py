@@ -117,7 +117,7 @@ def solve(scans: dict, cam_shape, PW: int, PH: int,
             "source_region": {"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0},
             "mesh": {"cols": cols, "rows": rows, "points": points},
             "blend": blend,
-            "color": {"gain": [1.0, 1.0, 1.0], "gamma": 2.2, "lift": [0.0, 0.0, 0.0]},
+            "color": {"gain": [1.0, 1.0, 1.0], "gamma": 1.0, "lift": [0.0, 0.0, 0.0]},
         })
     return entries
 

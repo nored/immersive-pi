@@ -1,0 +1,974 @@
+{
+  "version": 34,
+  "show": "ambient-loop",
+  "media": "native-ring-1280x800.immersive.json",
+  "loop": true,
+  "canvas": {
+    "cols": 12,
+    "rows": 1
+  },
+  "power": {
+    "backend": "none",
+    "wake_wait_s": 45,
+    "poweroff_grace_s": 8,
+    "ports": {},
+    "http": {
+      "on": "http://poe.local/port/{port}/on",
+      "off": "http://poe.local/port/{port}/off",
+      "method": "POST",
+      "headers": {}
+    },
+    "shell": {
+      "on": "",
+      "off": ""
+    },
+    "gpio": {
+      "chip": "gpiochip0",
+      "lines": {},
+      "active_low": true,
+      "pulse_ms": 400
+    }
+  },
+  "nodes": [
+    {
+      "node": "dortmund-slave-12",
+      "projector": "DORTMUND-SLAVE-12",
+      "source_region": {
+        "x": 0.9166666666666666,
+        "y": 0,
+        "w": 0.08333333333333333,
+        "h": 1
+      },
+      "mesh": {
+        "cols": 2,
+        "rows": 2,
+        "points": [
+          {
+            "u": 0,
+            "v": 0,
+            "x": -1,
+            "y": 1
+          },
+          {
+            "u": 1,
+            "v": 0,
+            "x": 1,
+            "y": 1
+          },
+          {
+            "u": 0,
+            "v": 1,
+            "x": -1,
+            "y": -1
+          },
+          {
+            "u": 1,
+            "v": 1,
+            "x": 1,
+            "y": -1
+          }
+        ]
+      },
+      "blend": {
+        "left": {
+          "width": 0,
+          "gamma": 2.2,
+          "black_lift": 0
+        },
+        "right": {
+          "width": 0,
+          "gamma": 2.2,
+          "black_lift": 0
+        },
+        "top": {
+          "width": 0,
+          "gamma": 2.2,
+          "black_lift": 0
+        },
+        "bottom": {
+          "width": 0,
+          "gamma": 2.2,
+          "black_lift": 0
+        }
+      },
+      "color": {
+        "gain": [
+          1,
+          1,
+          1
+        ],
+        "gamma": 1,
+        "lift": [
+          0,
+          0,
+          0
+        ]
+      },
+      "net": {
+        "mac": "88:a2:9e:92:cd:d8"
+      }
+    },
+    {
+      "node": "dortmund-slave-10",
+      "projector": "DORTMUND-SLAVE-10",
+      "source_region": {
+        "x": 0.75,
+        "y": 0,
+        "w": 0.08333333333333333,
+        "h": 1
+      },
+      "mesh": {
+        "cols": 2,
+        "rows": 2,
+        "points": [
+          {
+            "u": 0,
+            "v": 0,
+            "x": -1,
+            "y": 1
+          },
+          {
+            "u": 1,
+            "v": 0,
+            "x": 1,
+            "y": 1
+          },
+          {
+            "u": 0,
+            "v": 1,
+            "x": -1,
+            "y": -1
+          },
+          {
+            "u": 1,
+            "v": 1,
+            "x": 1,
+            "y": -1
+          }
+        ]
+      },
+      "blend": {
+        "left": {
+          "width": 0,
+          "gamma": 2.2,
+          "black_lift": 0
+        },
+        "right": {
+          "width": 0,
+          "gamma": 2.2,
+          "black_lift": 0
+        },
+        "top": {
+          "width": 0,
+          "gamma": 2.2,
+          "black_lift": 0
+        },
+        "bottom": {
+          "width": 0,
+          "gamma": 2.2,
+          "black_lift": 0
+        }
+      },
+      "color": {
+        "gain": [
+          1,
+          1,
+          1
+        ],
+        "gamma": 1,
+        "lift": [
+          0,
+          0,
+          0
+        ]
+      },
+      "net": {
+        "mac": "88:a2:9e:90:ed:7c"
+      }
+    },
+    {
+      "node": "dortmund-slave-11",
+      "projector": "DORTMUND-SLAVE-11",
+      "source_region": {
+        "x": 0.8333333333333334,
+        "y": 0,
+        "w": 0.08333333333333333,
+        "h": 1
+      },
+      "mesh": {
+        "cols": 2,
+        "rows": 2,
+        "points": [
+          {
+            "u": 0,
+            "v": 0,
+            "x": -1,
+            "y": 1
+          },
+          {
+            "u": 1,
+            "v": 0,
+            "x": 1,
+            "y": 1
+          },
+          {
+            "u": 0,
+            "v": 1,
+            "x": -1,
+            "y": -1
+          },
+          {
+            "u": 1,
+            "v": 1,
+            "x": 1,
+            "y": -1
+          }
+        ]
+      },
+      "blend": {
+        "left": {
+          "width": 0,
+          "gamma": 2.2,
+          "black_lift": 0
+        },
+        "right": {
+          "width": 0,
+          "gamma": 2.2,
+          "black_lift": 0
+        },
+        "top": {
+          "width": 0,
+          "gamma": 2.2,
+          "black_lift": 0
+        },
+        "bottom": {
+          "width": 0,
+          "gamma": 2.2,
+          "black_lift": 0
+        }
+      },
+      "color": {
+        "gain": [
+          1,
+          1,
+          1
+        ],
+        "gamma": 1,
+        "lift": [
+          0,
+          0,
+          0
+        ]
+      },
+      "net": {
+        "mac": "88:a2:9e:90:ef:24"
+      }
+    },
+    {
+      "node": "dortmund-slave-8",
+      "projector": "DORTMUND-SLAVE-8",
+      "source_region": {
+        "x": 0.5833333333333334,
+        "y": 0,
+        "w": 0.08333333333333333,
+        "h": 1
+      },
+      "mesh": {
+        "cols": 2,
+        "rows": 2,
+        "points": [
+          {
+            "u": 0,
+            "v": 0,
+            "x": -1,
+            "y": 1
+          },
+          {
+            "u": 1,
+            "v": 0,
+            "x": 1,
+            "y": 1
+          },
+          {
+            "u": 0,
+            "v": 1,
+            "x": -1,
+            "y": -1
+          },
+          {
+            "u": 1,
+            "v": 1,
+            "x": 1,
+            "y": -1
+          }
+        ]
+      },
+      "blend": {
+        "left": {
+          "width": 0,
+          "gamma": 2.2,
+          "black_lift": 0
+        },
+        "right": {
+          "width": 0,
+          "gamma": 2.2,
+          "black_lift": 0
+        },
+        "top": {
+          "width": 0,
+          "gamma": 2.2,
+          "black_lift": 0
+        },
+        "bottom": {
+          "width": 0,
+          "gamma": 2.2,
+          "black_lift": 0
+        }
+      },
+      "color": {
+        "gain": [
+          1,
+          1,
+          1
+        ],
+        "gamma": 1,
+        "lift": [
+          0,
+          0,
+          0
+        ]
+      },
+      "net": {
+        "mac": "88:a2:9e:90:ed:3e"
+      }
+    },
+    {
+      "node": "dortmund-slave-9",
+      "projector": "DORTMUND-SLAVE-9",
+      "source_region": {
+        "x": 0.6666666666666666,
+        "y": 0,
+        "w": 0.08333333333333333,
+        "h": 1
+      },
+      "mesh": {
+        "cols": 2,
+        "rows": 2,
+        "points": [
+          {
+            "u": 0,
+            "v": 0,
+            "x": -1,
+            "y": 1
+          },
+          {
+            "u": 1,
+            "v": 0,
+            "x": 1,
+            "y": 1
+          },
+          {
+            "u": 0,
+            "v": 1,
+            "x": -1,
+            "y": -1
+          },
+          {
+            "u": 1,
+            "v": 1,
+            "x": 1,
+            "y": -1
+          }
+        ]
+      },
+      "blend": {
+        "left": {
+          "width": 0,
+          "gamma": 2.2,
+          "black_lift": 0
+        },
+        "right": {
+          "width": 0,
+          "gamma": 2.2,
+          "black_lift": 0
+        },
+        "top": {
+          "width": 0,
+          "gamma": 2.2,
+          "black_lift": 0
+        },
+        "bottom": {
+          "width": 0,
+          "gamma": 2.2,
+          "black_lift": 0
+        }
+      },
+      "color": {
+        "gain": [
+          1,
+          1,
+          1
+        ],
+        "gamma": 1,
+        "lift": [
+          0,
+          0,
+          0
+        ]
+      },
+      "net": {
+        "mac": "e4:5f:01:73:ad:46"
+      }
+    },
+    {
+      "node": "dortmund-slave-4",
+      "projector": "DORTMUND-SLAVE-4",
+      "source_region": {
+        "x": 0.25,
+        "y": 0,
+        "w": 0.08333333333333333,
+        "h": 1
+      },
+      "mesh": {
+        "cols": 2,
+        "rows": 2,
+        "points": [
+          {
+            "u": 0,
+            "v": 0,
+            "x": -1,
+            "y": 1
+          },
+          {
+            "u": 1,
+            "v": 0,
+            "x": 1,
+            "y": 1
+          },
+          {
+            "u": 0,
+            "v": 1,
+            "x": -1,
+            "y": -1
+          },
+          {
+            "u": 1,
+            "v": 1,
+            "x": 1,
+            "y": -1
+          }
+        ]
+      },
+      "blend": {
+        "left": {
+          "width": 0,
+          "gamma": 2.2,
+          "black_lift": 0
+        },
+        "right": {
+          "width": 0,
+          "gamma": 2.2,
+          "black_lift": 0
+        },
+        "top": {
+          "width": 0,
+          "gamma": 2.2,
+          "black_lift": 0
+        },
+        "bottom": {
+          "width": 0,
+          "gamma": 2.2,
+          "black_lift": 0
+        }
+      },
+      "color": {
+        "gain": [
+          1,
+          1,
+          1
+        ],
+        "gamma": 1,
+        "lift": [
+          0,
+          0,
+          0
+        ]
+      },
+      "net": {
+        "mac": "e4:5f:01:73:ad:7b"
+      }
+    },
+    {
+      "node": "dortmund-slave-2",
+      "projector": "DORTMUND-SLAVE-2",
+      "source_region": {
+        "x": 0.08333333333333333,
+        "y": 0,
+        "w": 0.08333333333333333,
+        "h": 1
+      },
+      "mesh": {
+        "cols": 2,
+        "rows": 2,
+        "points": [
+          {
+            "u": 0,
+            "v": 0,
+            "x": -1,
+            "y": 1
+          },
+          {
+            "u": 1,
+            "v": 0,
+            "x": 1,
+            "y": 1
+          },
+          {
+            "u": 0,
+            "v": 1,
+            "x": -1,
+            "y": -1
+          },
+          {
+            "u": 1,
+            "v": 1,
+            "x": 1,
+            "y": -1
+          }
+        ]
+      },
+      "blend": {
+        "left": {
+          "width": 0,
+          "gamma": 2.2,
+          "black_lift": 0
+        },
+        "right": {
+          "width": 0,
+          "gamma": 2.2,
+          "black_lift": 0
+        },
+        "top": {
+          "width": 0,
+          "gamma": 2.2,
+          "black_lift": 0
+        },
+        "bottom": {
+          "width": 0,
+          "gamma": 2.2,
+          "black_lift": 0
+        }
+      },
+      "color": {
+        "gain": [
+          1,
+          1,
+          1
+        ],
+        "gamma": 1,
+        "lift": [
+          0,
+          0,
+          0
+        ]
+      },
+      "net": {
+        "mac": "88:a2:9e:90:ed:62"
+      }
+    },
+    {
+      "node": "dortmund-slave-1",
+      "projector": "DORTMUND-SLAVE-1",
+      "source_region": {
+        "x": 0,
+        "y": 0,
+        "w": 0.08333333333333333,
+        "h": 1
+      },
+      "mesh": {
+        "cols": 2,
+        "rows": 2,
+        "points": [
+          {
+            "u": 0,
+            "v": 0,
+            "x": -1,
+            "y": 1
+          },
+          {
+            "u": 1,
+            "v": 0,
+            "x": 1,
+            "y": 1
+          },
+          {
+            "u": 0,
+            "v": 1,
+            "x": -1,
+            "y": -1
+          },
+          {
+            "u": 1,
+            "v": 1,
+            "x": 1,
+            "y": -1
+          }
+        ]
+      },
+      "blend": {
+        "left": {
+          "width": 0,
+          "gamma": 2.2,
+          "black_lift": 0
+        },
+        "right": {
+          "width": 0,
+          "gamma": 2.2,
+          "black_lift": 0
+        },
+        "top": {
+          "width": 0,
+          "gamma": 2.2,
+          "black_lift": 0
+        },
+        "bottom": {
+          "width": 0,
+          "gamma": 2.2,
+          "black_lift": 0
+        }
+      },
+      "color": {
+        "gain": [
+          1,
+          1,
+          1
+        ],
+        "gamma": 1,
+        "lift": [
+          0,
+          0,
+          0
+        ]
+      },
+      "net": {
+        "mac": "e4:5f:01:bb:59:b3"
+      }
+    },
+    {
+      "node": "dortmund-slave-5",
+      "projector": "DORTMUND-SLAVE-5",
+      "source_region": {
+        "x": 0.3333333333333333,
+        "y": 0,
+        "w": 0.08333333333333333,
+        "h": 1
+      },
+      "mesh": {
+        "cols": 2,
+        "rows": 2,
+        "points": [
+          {
+            "u": 0,
+            "v": 0,
+            "x": -1,
+            "y": 1
+          },
+          {
+            "u": 1,
+            "v": 0,
+            "x": 1,
+            "y": 1
+          },
+          {
+            "u": 0,
+            "v": 1,
+            "x": -1,
+            "y": -1
+          },
+          {
+            "u": 1,
+            "v": 1,
+            "x": 1,
+            "y": -1
+          }
+        ]
+      },
+      "blend": {
+        "left": {
+          "width": 0,
+          "gamma": 2.2,
+          "black_lift": 0
+        },
+        "right": {
+          "width": 0,
+          "gamma": 2.2,
+          "black_lift": 0
+        },
+        "top": {
+          "width": 0,
+          "gamma": 2.2,
+          "black_lift": 0
+        },
+        "bottom": {
+          "width": 0,
+          "gamma": 2.2,
+          "black_lift": 0
+        }
+      },
+      "color": {
+        "gain": [
+          1,
+          1,
+          1
+        ],
+        "gamma": 1,
+        "lift": [
+          0,
+          0,
+          0
+        ]
+      },
+      "net": {
+        "mac": "88:a2:9e:90:ec:e7"
+      }
+    },
+    {
+      "node": "dortmund-slave-3",
+      "projector": "DORTMUND-SLAVE-3",
+      "source_region": {
+        "x": 0.16666666666666666,
+        "y": 0,
+        "w": 0.08333333333333333,
+        "h": 1
+      },
+      "mesh": {
+        "cols": 2,
+        "rows": 2,
+        "points": [
+          {
+            "u": 0,
+            "v": 0,
+            "x": -1,
+            "y": 1
+          },
+          {
+            "u": 1,
+            "v": 0,
+            "x": 1,
+            "y": 1
+          },
+          {
+            "u": 0,
+            "v": 1,
+            "x": -1,
+            "y": -1
+          },
+          {
+            "u": 1,
+            "v": 1,
+            "x": 1,
+            "y": -1
+          }
+        ]
+      },
+      "blend": {
+        "left": {
+          "width": 0,
+          "gamma": 2.2,
+          "black_lift": 0
+        },
+        "right": {
+          "width": 0,
+          "gamma": 2.2,
+          "black_lift": 0
+        },
+        "top": {
+          "width": 0,
+          "gamma": 2.2,
+          "black_lift": 0
+        },
+        "bottom": {
+          "width": 0,
+          "gamma": 2.2,
+          "black_lift": 0
+        }
+      },
+      "color": {
+        "gain": [
+          1,
+          1,
+          1
+        ],
+        "gamma": 1,
+        "lift": [
+          0,
+          0,
+          0
+        ]
+      },
+      "net": {
+        "mac": "88:a2:9e:90:ee:33"
+      }
+    },
+    {
+      "node": "dortmund-slave-7",
+      "projector": "DORTMUND-SLAVE-7",
+      "source_region": {
+        "x": 0.5,
+        "y": 0,
+        "w": 0.08333333333333333,
+        "h": 1
+      },
+      "mesh": {
+        "cols": 2,
+        "rows": 2,
+        "points": [
+          {
+            "u": 0,
+            "v": 0,
+            "x": -0.9987582311534968,
+            "y": 0.9997051084293621
+          },
+          {
+            "u": 1,
+            "v": 0,
+            "x": 1,
+            "y": 1
+          },
+          {
+            "u": 0,
+            "v": 1,
+            "x": -1,
+            "y": -1
+          },
+          {
+            "u": 1,
+            "v": 1,
+            "x": 1,
+            "y": -1
+          }
+        ]
+      },
+      "blend": {
+        "left": {
+          "width": 0,
+          "gamma": 2.2,
+          "black_lift": 0
+        },
+        "right": {
+          "width": 0,
+          "gamma": 2.2,
+          "black_lift": 0
+        },
+        "top": {
+          "width": 0,
+          "gamma": 2.2,
+          "black_lift": 0
+        },
+        "bottom": {
+          "width": 0,
+          "gamma": 2.2,
+          "black_lift": 0
+        }
+      },
+      "color": {
+        "gain": [
+          1,
+          1,
+          1
+        ],
+        "gamma": 1,
+        "lift": [
+          0,
+          0,
+          0
+        ]
+      },
+      "net": {
+        "mac": "88:a2:9e:e9:1a:01"
+      }
+    },
+    {
+      "node": "dortmund-slave-6",
+      "projector": "DORTMUND-SLAVE-6",
+      "source_region": {
+        "x": 0.4166666666666667,
+        "y": 0,
+        "w": 0.08333333333333333,
+        "h": 1
+      },
+      "mesh": {
+        "cols": 2,
+        "rows": 2,
+        "points": [
+          {
+            "u": 0,
+            "v": 0,
+            "x": -1,
+            "y": 1
+          },
+          {
+            "u": 1,
+            "v": 0,
+            "x": 1,
+            "y": 1
+          },
+          {
+            "u": 0,
+            "v": 1,
+            "x": -1,
+            "y": -1
+          },
+          {
+            "u": 1,
+            "v": 1,
+            "x": 1,
+            "y": -1
+          }
+        ]
+      },
+      "blend": {
+        "left": {
+          "width": 0,
+          "gamma": 2.2,
+          "black_lift": 0
+        },
+        "right": {
+          "width": 0,
+          "gamma": 2.2,
+          "black_lift": 0
+        },
+        "top": {
+          "width": 0,
+          "gamma": 2.2,
+          "black_lift": 0
+        },
+        "bottom": {
+          "width": 0,
+          "gamma": 2.2,
+          "black_lift": 0
+        }
+      },
+      "color": {
+        "gain": [
+          1,
+          1,
+          1
+        ],
+        "gamma": 1,
+        "lift": [
+          0,
+          0,
+          0
+        ]
+      },
+      "net": {
+        "mac": "88:a2:9e:92:cd:93"
+      }
+    }
+  ],
+  "room_devices": {
+    "base_url": "http://192.168.230.156:1880",
+    "ready_timeout_s": 180
+  }
+}

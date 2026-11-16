@@ -1,0 +1,43 @@
+{
+  "id": "nasa-alaska-glaciers-5120",
+  "title": "Fly Above Alaskan Glaciers in 360 \u2014 extended",
+  "kind": "aircraft flight",
+  "creator": "NASA\u2019s Goddard Space Flight Center; Jefferson Beck",
+  "license": "NASA public-domain material",
+  "license_url": "https://www.nasa.gov/nasa-brand-center/images-and-media/",
+  "source_page": "https://svs.gsfc.nasa.gov/13711/",
+  "file": "nasa-alaska-glaciers-5120.webm",
+  "sha256": "efa7b969f9e1e55d753356332d526d8402a2286b930f8f36086c673a896797b1",
+  "metadata": {
+    "programs": [],
+    "stream_groups": [],
+    "streams": [
+      {
+        "codec_name": "vp8",
+        "codec_type": "video",
+        "width": 5120,
+        "height": 2560,
+        "r_frame_rate": "30000/1001",
+        "side_data_list": [
+          {},
+          {}
+        ]
+      },
+      {
+        "codec_name": "opus",
+        "codec_type": "audio",
+        "r_frame_rate": "0/0"
+      }
+    ],
+    "format": {
+      "duration": "683.933000"
+    }
+  },
+  "projection": "equirectangular 360 mono",
+  "status": "published; hash-verified on all 12 nodes",
+  "native_room_package": "nasa-alaska-glaciers-5120-full-mapped.immersive.json",
+  "attribution": "Fly Above Alaskan Glaciers in 360 \u2014 extended \u2014 NASA\u2019s Goddard Space Flight Center; Jefferson Beck. Source: https://svs.gsfc.nasa.gov/13711/. License: https://www.nasa.gov/nasa-brand-center/images-and-media/. Room conversion: geometry remapping, wall-view crop, frame-rate resampling and silent output.",
+  "native_frames": 20452,
+  "ready_for_room": true,
+  "publish_evidence": "diagnostics/alaska-full-publish.json"
+}

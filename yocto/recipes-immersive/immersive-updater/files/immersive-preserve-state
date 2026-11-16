@@ -1,0 +1,70 @@
+#!/usr/bin/env python3
+"""Carry device data and pending confirmation into an inactive rootfs slot."""
+import argparse
+import os
+from pathlib import Path
+import shutil
+import tempfile
+
+MUTABLE = (
+    'opt/immersive/control-node/room-model.json',
+    'opt/immersive/control-node/.git',
+    'opt/immersive/control-node/media',
+    'opt/immersive/media',
+    'var/lib/immersive',
+    'root/.ssh',
+    'etc/dropbear',
+    'etc/ssh',
+    'etc/default/dropbear',
+    'etc/immersive.conf',
+    'etc/hostname',
+)
+
+
+def preserve(source, target, version, root_device):
+    if source.resolve() == target.resolve():
+        raise ValueError('Source and inactive rootfs must be different')
+    if root_device not in ('/dev/mmcblk0p2', '/dev/mmcblk0p3'):
+        raise ValueError('Invalid pending root device')
+    for relative in MUTABLE:
+        old, new = source/relative, target/relative
+        if not old.exists() and not old.is_symlink():
+            continue
+        new.parent.mkdir(parents=True, exist_ok=True)
+        if old.is_dir() and not old.is_symlink():
+            shutil.copytree(old, new, dirs_exist_ok=True, symlinks=True)
+        else:
+            shutil.copy2(old, new, follow_symlinks=False)
+    # Keep this device's root account credentials, without carrying unrelated
+    # old system accounts into the new OS or printing password hashes.
+    old_shadow, new_shadow = source/'etc/shadow', target/'etc/shadow'
+    if old_shadow.exists() and new_shadow.exists():
+        root = [line for line in old_shadow.read_text().splitlines() if line.startswith('root:')]
+        lines = new_shadow.read_text().splitlines()
+        if len(root) != 1 or sum(line.startswith('root:') for line in lines) != 1:
+            raise ValueError('Invalid root account in shadow database')
+        body = '\n'.join(root[0] if line.startswith('root:') else line for line in lines)+'\n'
+        with tempfile.NamedTemporaryFile(mode='w', dir=new_shadow.parent, delete=False) as temporary:
+            temporary.write(body)
+            name = temporary.name
+        try:
+            os.chmod(name, new_shadow.stat().st_mode & 0o777)
+            os.replace(name, new_shadow)
+        finally:
+            if os.path.exists(name): os.unlink(name)
+    # /var/lib is not shared between A and B. The *new* slot must contain these
+    # markers before reboot, otherwise its confirmation service silently skips.
+    pending = target/'var/lib/immersive-updater'
+    pending.mkdir(parents=True, exist_ok=True)
+    (pending/'pending-version').write_text(version+'\n')
+    (pending/'pending-root').write_text(root_device+'\n')
+
+
+if __name__ == '__main__':
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('source',type=Path)
+    parser.add_argument('target',type=Path)
+    parser.add_argument('version')
+    parser.add_argument('root_device')
+    args=parser.parse_args()
+    preserve(args.source,args.target,args.version,args.root_device)

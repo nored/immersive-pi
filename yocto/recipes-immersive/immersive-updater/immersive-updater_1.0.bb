@@ -6,6 +6,9 @@ SRC_URI = " \
     file://immersive-updater \
     file://immersive-updater-confirm \
     file://immersive-resize.sh \
+    file://immersive-install-boot \
+    file://immersive-preserve-state \
+    file://immersive-health-check \
 "
 
 S = "${WORKDIR}"
@@ -13,7 +16,7 @@ S = "${WORKDIR}"
 inherit systemd
 
 RDEPENDS:${PN} = " \
-    curl openssl-bin zstd coreutils sed gawk \
+    curl openssl-bin zstd coreutils sed gawk python3-modules immersive gstreamer1.0-python \
     e2fsprogs e2fsprogs-resize2fs e2fsprogs-mke2fs \
     util-linux util-linux-sfdisk parted \
 "
@@ -23,6 +26,11 @@ do_install() {
     install -m 0755 ${WORKDIR}/immersive-updater         ${D}${bindir}/immersive-updater
     install -m 0755 ${WORKDIR}/immersive-updater-confirm ${D}${bindir}/immersive-updater-confirm
     install -m 0755 ${WORKDIR}/immersive-resize.sh       ${D}${bindir}/immersive-resize.sh
+
+    install -m 0755 ${WORKDIR}/immersive-install-boot ${D}${bindir}/immersive-install-boot
+
+    install -m 0755 ${WORKDIR}/immersive-preserve-state ${D}${bindir}/immersive-preserve-state
+    install -m 0755 ${WORKDIR}/immersive-health-check ${D}${bindir}/immersive-health-check
 
     install -d ${D}${systemd_system_unitdir}
 
@@ -92,6 +100,9 @@ FILES:${PN} = " \
     ${bindir}/immersive-updater \
     ${bindir}/immersive-updater-confirm \
     ${bindir}/immersive-resize.sh \
+    ${bindir}/immersive-install-boot \
+    ${bindir}/immersive-preserve-state \
+    ${bindir}/immersive-health-check \
     ${systemd_system_unitdir}/immersive-updater.service \
     ${systemd_system_unitdir}/immersive-updater.timer \
     ${systemd_system_unitdir}/immersive-updater-confirm.service \

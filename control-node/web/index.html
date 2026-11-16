@@ -12,14 +12,16 @@
   <div class="show-controls">
     <select id="media-select" title="Video to play"></select>
     <label class="upload-btn" title="Upload a video">＋video
-      <input type="file" id="upload-input" accept="video/mp4,video/quicktime,video/x-matroska,.mp4,.mov,.mkv,.h264" hidden />
+      <input type="file" id="upload-input" accept="video/mp4,video/quicktime,video/x-matroska,.mp4,.mov,.mkv,.h264,.json" multiple hidden />
     </label>
-    <button data-show="play" class="go">Play</button>
+    <button data-show="play" class="go">Start / Play</button>
     <button data-show="stop">Stop</button>
+    <span id="playback-status" role="status">stopped</span>
+    <span id="video-resolution"></span>
     <button data-show="blackout" class="warn">Blackout</button>
     <span class="sep"></span>
     <button data-show="wake" title="Wake the room">Wake</button>
-    <button data-show="hibernate" class="warn" title="Sleep the room (power down)">Sleep</button>
+    <button data-show="hibernate" class="warn" title="Stop video and switch off the room projectors">Sleep</button>
   </div>
   <div class="calib-order" title="In-room calibration order">
     <span data-step="geometry" class="active">1 · geometry</span>
@@ -28,7 +30,8 @@
     <span data-step="color">4 · color</span>
   </div>
   <div class="save-controls">
-    <button id="autocalib" title="Structured-light auto-calibration (needs a camera on the control node)">Auto-calibrate</button>
+    <button id="autocalib" disabled title="The legacy scanner is retired. Seamcal is experimental; a validated automatic phone-scan workflow is still in development.">Auto-calibration unavailable</button>
+    <button id="download-calibration-draft" hidden>Download calibration draft</button>
     <a href="dashboard.html" class="fleet-link" title="Fleet heartbeat dashboard">fleet ▦</a>
     <span id="version">v—</span>
     <span id="conn" class="conn down">offline</span>
@@ -37,12 +40,24 @@
 </header>
 
 <main>
-  <!-- left: live preview grid of every node -->
+  <!-- Node health and room controls -->
   <aside id="grid">
     <div id="pending-wrap" hidden>
       <h2>Pending enrollment</h2>
       <div id="pending"></div>
     </div>
+    <details id="room-devices"><summary>Room devices</summary>
+    <div id="device-status" role="status">Not configured</div>
+    <div id="device-controls">
+      <button data-device="panorama" data-action="on">Panorama on</button>
+      <button data-device="panorama" data-action="off">Panorama off</button>
+      <button data-device="praesi" data-action="on">Presentation on</button>
+      <button data-device="praesi" data-action="off">Presentation off</button>
+      <button data-device="curtain/1" data-action="auf">Left curtain open</button>
+      <button data-device="curtain/1" data-action="zu">Left curtain close</button>
+      <button data-device="curtain/2" data-action="auf">Right curtain open</button>
+      <button data-device="curtain/2" data-action="zu">Right curtain close</button>
+    </div><div id="projector-list"></div></details>
     <h2>Nodes</h2>
     <div id="thumbs"></div>
     <button id="add-node" title="Add a node to the room">＋ add node</button>
@@ -56,6 +71,7 @@
       <div id="patterns">
         <button data-pat="video" class="active">video</button>
         <button data-pat="grid">grid</button>
+        <button data-pat="source-grid" title="Matching panorama coordinates share colors and grid lines, including the 360° seam">source grid</button>
         <button data-pat="crosshair">crosshair</button>
         <button data-pat="grey">grey</button>
         <button data-pat="white">white</button>
@@ -64,7 +80,6 @@
       </div>
     </div>
     <div id="stage">
-      <img id="backdrop" alt="live preview" />
       <canvas id="mesh-canvas"></canvas>
       <div id="no-sel">select a node from the grid</div>
     </div>
@@ -83,6 +98,25 @@
 
   <!-- right: blend + color editors -->
   <aside id="params">
+    <section class="panel" id="panel-source">
+      <h2>Source / overlap</h2>
+      <p class="hint">Percent of the full panorama. Neighboring projectors need shared source pixels before blending.</p>
+      <button id="room-source-grid" type="button">Source grid on all projectors</button>
+      <form id="source-form">
+        <div class="source-fields">
+          <label>Left % <input id="source-x" type="number" step="any" required></label>
+          <label>Top % <input id="source-y" type="number" step="any" required></label>
+          <label>Width % <input id="source-w" type="number" step="any" min="0" max="100" required></label>
+          <label>Height % <input id="source-h" type="number" step="any" min="0" max="100" required></label>
+        </div>
+        <label><input id="source-wrap" type="checkbox"> Wrap across the 360° seam</label>
+        <p id="source-angle" class="hint"></p>
+        <button id="source-apply" type="submit">Apply source region</button>
+      </form>
+      <p id="source-status" role="status"></p>
+      <p class="hint">Stop playback to plan wider coverage. Generate and upload matching tiles before starting again. Save + commit persists accepted edits.</p>
+      <button id="download-room-model" type="button">Download room model</button>
+    </section>
     <section class="panel" id="panel-blend">
       <h2>Blend</h2>
       <p class="hint">tune on grey until the seam vanishes</p>

@@ -8,13 +8,8 @@
   "media_dir": "/opt/immersive/media",
   "drm": {
     "device": "/dev/dri/card0",
-    "connector": "auto"
-  },
-  "preview": {
-    "width": 320,
-    "height": 180,
-    "fps": 8,
-    "jpeg_quality": 60
+    "connector": "auto",
+    "mode": "1280x800@60"
   },
   "heartbeat_hz": 1,
   "allow_poweroff": false

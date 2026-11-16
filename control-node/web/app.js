@@ -1,18 +1,20 @@
 "use strict";
 // Calibration site. Connects to the controller's WebSocket broker, renders the
-// live preview grid + node editor, and turns every edit into a command. Edits
+// node status list + mesh editor, and turns every edit into a command. Edits
 // are per-node: saving commits the whole model but only the touched node's
 // entry changes, which is what makes a single beamer swap safe.
 
-const WS_URL = `ws://${location.hostname}:8765`;
+const wsAddress = new URL("/ws", location.href);
+wsAddress.protocol = location.protocol === "https:" ? "wss:" : "ws:";
+const WS_URL = wsAddress.href;
 
 const state = {
   ws: null,
   room: { nodes: [] },
   show: {},
   heartbeats: {},
+  heartbeatSeen: {},
   nodesUp: [],
-  previews: {},        // node -> dataURL
   sel: null,           // selected node id
   pending: {},         // connected-but-unassigned nodes -> {mac, serial}
   discovered: {},      // mDNS-found nodes not yet in the room -> addr
@@ -22,6 +24,7 @@ const state = {
   drag: null,          // {index}
   sliding: false,      // true while a slider is dragged (skip echo re-render)
   power: "awake",      // room power state: awake | hibernating | waking
+  pendingSource: null,
 };
 
 // ---- websocket -------------------------------------------------------------
@@ -32,7 +35,11 @@ function connect() {
     ws.send(JSON.stringify({ role: "web", hello: "web" }));
     setConn(true);
   };
-  ws.onclose = () => { setConn(false); setTimeout(connect, 1500); };
+  ws.onclose = () => {
+    state.pendingSource = null;
+    document.getElementById("source-apply").disabled = false;
+    setConn(false); setTimeout(connect, 1500);
+  };
   ws.onmessage = (ev) => onMessage(JSON.parse(ev.data));
 }
 
@@ -42,9 +49,12 @@ function send(obj) {
 
 function onMessage(m) {
   if (m.type === "snapshot") {
+    document.getElementById("source-form").dataset.node = "";
+    renderDevices(m.room_devices);
     state.room = m.room || { nodes: [] };
     state.show = m.show || {};
     state.heartbeats = m.heartbeats || {};
+    for (const node of Object.keys(state.heartbeats)) state.heartbeatSeen[node] = performance.now();
     state.nodesUp = m.nodes_up || [];
     setVersion(state.room.version);
     populateMedia(m.playlist);
@@ -55,6 +65,25 @@ function onMessage(m) {
     renderThumbs();
     state.power = m.power_state || "awake"; reflectPower();
     if (state.sel) renderEditor();
+    reflectShow();
+  } else if (m.type === "room_devices") {
+    renderDevices(m.devices);
+  } else if (m.type === "nodes") {
+    state.nodesUp = m.nodes_up || [];
+    renderThumbDots();
+  } else if (m.type === "error") {
+    if (m.cmd === "set_source_region" && m.node === state.sel) {
+      state.pendingSource = null;
+      document.getElementById("source-status").textContent = m.message;
+      renderSource(entryFor(state.sel));
+    }
+    flash(m.message || "Playback failed");
+  } else if (m.type === "prepare_progress") {
+    document.getElementById("playback-status").textContent = `ready ${m.ready.length}/${m.ready.length + m.waiting.length}`;
+  } else if (m.type === "frame_status") {
+    const values = Object.values(m.presented || {});
+    document.getElementById("playback-status").textContent =
+      `frame ${values.length ? Math.min(...values) : "—"} · holds ${m.holds}`;
   } else if (m.type === "power") {
     state.power = m.state;
     reflectPower();
@@ -75,20 +104,29 @@ function onMessage(m) {
     renderThumbs();
     if (state.sel) renderEditor();
   } else if (m.type === "entry") {
+    const pending = state.pendingSource;
+    const applied = pending && pending.node === m.entry.node &&
+      Object.keys(pending.value).every(k => m.entry.source_region[k] === pending.value[k]);
+    if (applied) state.pendingSource = null;
     upsertEntry(m.entry);
     if (m.entry.node === state.sel) renderEditor();
+    if (applied && m.entry.node === state.sel)
+      document.getElementById("source-status").textContent = "Applied. Save + commit to persist.";
   } else if (m.type === "heartbeat") {
     state.heartbeats[m.hb.node] = m.hb;
+    state.heartbeatSeen[m.hb.node] = performance.now();
     renderThumbDots(); renderHB();
-  } else if (m.preview) {
-    state.previews[m.preview] = "data:image/jpeg;base64," + m.jpeg_b64;
-    updatePreview(m.preview);
   } else if (m.type === "show") {
     state.show = m.show;
+    reflectShow();
   } else if (m.type === "saved") {
     setVersion(m.version); flash(`saved v${m.version} + committed`);
   } else if (m.type === "autocalib") {
-    if (m.stage === "error") flash(`auto-calibrate failed: ${m.msg}`);
+    if (m.stage === "draft") {
+      state.calibrationDraft = m.draft;
+      document.getElementById("download-calibration-draft").hidden = false;
+      flash("Calibration draft ready; working configuration unchanged");
+    } else if (m.stage === "error") flash(`auto-calibrate failed: ${m.msg}`);
     else if (m.stage === "done") flash(`auto-calibrate done`);
     else flash(`auto-calibrate: ${m.stage}${m.pct != null ? " " + m.pct + "%" : ""}`);
   }
@@ -100,7 +138,7 @@ function upsertEntry(entry) {
 }
 function entryFor(node) { return state.room.nodes.find((n) => n.node === node); }
 
-// ---- preview grid ----------------------------------------------------------
+// ---- node status list ----------------------------------------------------------
 function renderThumbs() {
   const wrap = document.getElementById("thumbs");
   wrap.innerHTML = "";
@@ -112,11 +150,9 @@ function renderThumbs() {
     d.className = "thumb" + (n.node === state.sel ? " sel" : "");
     d.dataset.node = n.node;
     d.innerHTML =
-      `<img id="thumb-${n.node}" />` +
       `<span class="lbl">${n.node}</span>` +
       `<span class="dot" id="dot-${n.node}"></span>`;
     d.onclick = () => selectNode(n.node);
-    if (state.previews[n.node]) d.querySelector("img").src = state.previews[n.node];
 
     const admin = document.createElement("div");
     admin.className = "node-admin";
@@ -194,17 +230,24 @@ function renderThumbDots() {
     if (!dot) continue;
     const up = state.nodesUp.includes(n.node);
     const hb = state.heartbeats[n.node];
-    dot.className = "dot " + (up && hb && hb.decoder_ok && hb.fb_ok ? "ok" :
-      up ? "bad" : "");
+    const fresh = hb && performance.now() - (state.heartbeatSeen[n.node] || 0) < 4000;
+    const failed = hb && (hb.playback_error || hb.display_error || !hb.fb_ok);
+    dot.className = "dot " + (!up ? "" : !fresh || failed ? "bad" : hb.decoder_ok ? "ok" : "idle");
+    dot.title = !up ? "Disconnected from master" : !fresh ? "Connected; no recent heartbeat" :
+      failed ? (hb.playback_error || hb.display_error || "Display unavailable") :
+      hb.decoder_ok ? "Decoder and display ready" : "Connected; waiting for video";
   }
 }
-function updatePreview(node) {
-  const t = document.getElementById(`thumb-${node}`);
-  if (t) t.src = state.previews[node];
-  if (node === state.sel) {
-    document.getElementById("backdrop").src = state.previews[node];
-  }
+
+function reflectShow() {
+  const show = state.show || {};
+  document.title = show.trial ? "TRIAL — Immersive control" : "Immersive control";
+  const resolution = document.getElementById("video-resolution");
+  resolution.textContent = show.source_width ? `${show.source_width}×${show.source_height} ${show.media_mode === "tiles" ? "per projector" : "shared panorama"}` : "";
+  document.getElementById("playback-status").textContent = show.error || show.state ||
+    (show.playing ? "playing" : "stopped");
 }
+
 
 // ---- node selection / editor ----------------------------------------------
 function selectNode(node) {
@@ -224,8 +267,8 @@ function renderEditor() {
   document.getElementById("sel-title").textContent =
     `${e.node} → ${e.projector}  ·  mesh ${e.mesh.cols}×${e.mesh.rows}`;
   document.getElementById("res-select").value = `${e.mesh.cols}x${e.mesh.rows}`;
-  if (state.previews[state.sel]) document.getElementById("backdrop").src = state.previews[state.sel];
   drawMesh();
+  renderSource(e);
   renderBlend(e);
   renderColor(e);
   setActive("#patterns button", `[data-pat="${state.pattern}"]`);
@@ -317,6 +360,51 @@ function setupMeshDrag() {
   canvas.addEventListener("pointercancel", end);
 }
 
+// ---- source coverage editor ------------------------------------------------
+function renderSource(entry) {
+  if (!entry) return;
+  const form = document.getElementById("source-form");
+  if (form.dataset.node !== entry.node || !form.contains(document.activeElement)) {
+    for (const k of ["x", "y", "w", "h"])
+      document.getElementById(`source-${k}`).value = entry.source_region[k] * 100;
+    document.getElementById("source-wrap").checked = !!entry.source_region.wrap;
+  }
+  if (form.dataset.node !== entry.node)
+    document.getElementById("source-status").textContent = "";
+  form.dataset.node = entry.node;
+  document.getElementById("source-apply").disabled = state.pendingSource?.node === entry.node;
+  sourceAngle();
+}
+
+function sourceAngle() {
+  const width = document.getElementById("source-w").valueAsNumber;
+  document.getElementById("source-angle").textContent =
+    Number.isFinite(width) ? `${(width * 3.6).toFixed(2)}° horizontally` : "";
+}
+
+function applySource(event) {
+  event.preventDefault();
+  const status = document.getElementById("source-status");
+  if (!state.sel) { status.textContent = "Select a node first."; return; }
+  if (state.ws?.readyState !== 1) { status.textContent = "Disconnected; source region unchanged."; return; }
+  const value = {};
+  for (const k of ["x", "y", "w", "h"])
+    value[k] = document.getElementById(`source-${k}`).valueAsNumber / 100;
+  value.wrap = document.getElementById("source-wrap").checked;
+  if (![value.x, value.y, value.w, value.h].every(Number.isFinite) ||
+      value.w <= 0 || value.h <= 0 || value.w > 1 || value.h > 1 ||
+      value.y < 0 || value.y + value.h > 1 + 1e-9 ||
+      (!value.wrap && (value.x < 0 || value.x + value.w > 1 + 1e-9))) {
+    status.textContent = "Use positive dimensions within the panorama; enable wrap when crossing the 360° seam.";
+    return;
+  }
+  // Wait for the controller's accepted entry before changing local room state.
+  state.pendingSource = {node:state.sel, value};
+  status.textContent = "Applying…";
+  document.getElementById("source-apply").disabled = true;
+  send({cmd:"set_source_region", node:state.sel, source_region:value});
+}
+
 // ---- blend editor ----------------------------------------------------------
 const EDGES = ["left", "right", "top", "bottom"];
 function renderBlend(e) {
@@ -373,6 +461,21 @@ function slider(label, value, min, max, step, oninput) {
 
 // ---- toolbar wiring --------------------------------------------------------
 function wireToolbar() {
+  document.getElementById("room-source-grid").onclick = () => {
+    send({cmd:"stop"});
+    for (const entry of state.room.nodes)
+      send({cmd:"testpattern", node:entry.node, kind:"source-grid", on:true});
+    state.pattern = "source-grid";
+    setActive("#patterns button", '[data-pat="source-grid"]');
+  };
+  document.getElementById("source-form").onsubmit = applySource;
+  document.getElementById("source-w").oninput = sourceAngle;
+  document.getElementById("download-room-model").onclick = () => {
+    const url = URL.createObjectURL(new Blob([JSON.stringify(state.room, null, 2)], {type:"application/json"}));
+    const link = document.createElement("a");
+    link.href = url; link.download = "room-model.json"; link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
   document.querySelectorAll("[data-show]").forEach((btn) => {
     btn.onclick = () => {
       const a = btn.dataset.show;
@@ -409,7 +512,7 @@ function wireToolbar() {
     s.onclick = () => {
       state.step = s.dataset.step;
       setActive(".calib-order span", `[data-step="${state.step}"]`);
-      const pat = { geometry: "grid", overlap: "grid", blend: "grey", color: "white" }[state.step];
+      const pat = { geometry: "grid", overlap: "source-grid", blend: "grey", color: "white" }[state.step];
       if (state.sel) {
         state.pattern = pat;
         send({ cmd: "testpattern", node: state.sel, kind: pat, on: true });
@@ -420,9 +523,15 @@ function wireToolbar() {
 
   document.getElementById("swap").onclick = beamerSwap;
 
+  document.getElementById("download-calibration-draft").onclick = () => {
+    if (!state.calibrationDraft) return;
+    const url = URL.createObjectURL(new Blob([JSON.stringify(state.calibrationDraft, null, 2)], {type: "application/json"}));
+    const link = document.createElement("a");
+    link.href = url; link.download = "calibration-draft.json"; link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
   document.getElementById("autocalib").onclick = () => {
-    if (confirm("Run structured-light auto-calibration? Projectors will flash gray-code patterns and the control-node camera will scan them."))
-      send({ cmd: "autocalibrate" });
+    flash("Legacy auto-calibration is retired; the phone-scan replacement is not ready.");
   };
 
   document.getElementById("add-node").onclick = () => {
@@ -435,21 +544,23 @@ function wireToolbar() {
 
   const up = document.getElementById("upload-input");
   up.onchange = async () => {
-    const f = up.files[0];
-    if (!f) return;
-    flash(`uploading ${f.name}…`);
+    // Upload the manifest last so the show cannot be selected before its tiles.
+    const files = Array.from(up.files).sort((a,b) => Number(a.name.endsWith(".immersive.json"))-Number(b.name.endsWith(".immersive.json")));
+    if (!files.length) return;
+    up.disabled = true;
     try {
-      const r = await fetch(`/api/upload?name=${encodeURIComponent(f.name)}`,
-                            { method: "POST", body: f });
-      const j = await r.json();
-      if (j.error) alert("upload failed: " + j.error);
-      else {
-        flash(`uploaded ${j.uploaded}`);
+      for (let i=0; i<files.length; i++) {
+        const f=files[i];
+        flash(`uploading ${i+1}/${files.length}: ${f.name}…`);
+        const r=await fetch(`/api/upload?name=${encodeURIComponent(f.name)}`, {method:"POST",body:f});
+        const j=await r.json();
+        if (!r.ok || j.error) throw new Error(j.error || `HTTP ${r.status}`);
         if (j.playlist) populateMedia(j.playlist);
-        document.getElementById("media-select").value = j.uploaded;
+        document.getElementById("media-select").value=j.uploaded;
       }
-    } catch (e) { alert("upload failed: " + e); }
-    up.value = "";
+      flash(`Uploaded ${files.length} file${files.length===1 ? "" : "s"}`);
+    } catch(e) { alert("upload failed: "+e.message); }
+    finally { up.disabled=false; up.value=""; }
   };
 }
 
@@ -532,10 +643,42 @@ window.addEventListener("load", () => {
   wireToolbar();
   setupMeshDrag();
   connect();
+  setInterval(renderThumbDots, 1000);
   window.addEventListener("resize", () => state.sel && drawMesh());
   // slider drag released anywhere: re-enable editor refresh and pull in any
   // room update that arrived (and was skipped) during the drag.
   window.addEventListener("pointerup", () => {
     if (state.sliding) { state.sliding = false; if (state.sel) renderEditor(); }
+  });
+});
+
+function renderDevices(devices) {
+  const status = document.getElementById("device-status");
+  if (!status) return;
+  const enabled = !!devices?.enabled;
+  document.querySelectorAll("[data-device]").forEach(b => b.disabled = !enabled);
+  const projectors = devices?.beamer || [];
+  status.textContent = !enabled ? "Room device API not configured" : devices.error
+    ? `Status unavailable: ${devices.error}`
+    : `${projectors.filter(p => p.antwortet && p.ist === "an").length}/${projectors.length} projectors on · ${devices.updated_at ? new Date(devices.updated_at * 1000).toLocaleTimeString() : "waiting"}`;
+  const list = document.getElementById("projector-list");
+  list.replaceChildren();
+  for (const p of projectors) {
+    const row = document.createElement("div");
+    const label = document.createElement("span");
+    label.textContent = `${p.nr} · ${p.name}: ${p.ist} · target ${p.ziel}${p.antwortet ? "" : " · unreachable"}${p.fehler ? " · " + p.fehler : ""}${devices.error ? " · stale" : ""} `;
+    row.append(label);
+    for (const action of ["on", "off"]) {
+      const b = document.createElement("button");
+      b.textContent = action;
+      b.onclick = () => send({cmd: "room_device", target: `beamer/${p.nr}`, action});
+      row.append(b);
+    }
+    list.append(row);
+  }
+}
+window.addEventListener("load", () => {
+  document.querySelectorAll("[data-device]").forEach(b => {
+    b.onclick = () => send({cmd: "room_device", target: b.dataset.device, action: b.dataset.action});
   });
 });

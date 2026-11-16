@@ -1,6 +1,21 @@
 # generated media
 test-media/*.mp4
+test-media/**/*.mp4
 test-media/*.h264
+test-media/**/*.webm
+test-media/**/*.zip
+test-media/native-*/
+test-media/index.json
+test-media/underwater-source/*.jpg
+# local measurements, render outputs, archives and signing material
+diagnostics/
+tools/seamcal/calib-work/
+tools/seamcal/tls-key.pem
+tools/seamcal/tls-cert.pem
+*.p12
+*.mobileprovision
+*.xcuserstate
+.DS_Store
 # per-node concrete config (copied from config.example.json)
 render-node/config.json
 # python

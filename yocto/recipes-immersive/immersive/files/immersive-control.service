@@ -9,7 +9,11 @@ User=root
 WorkingDirectory=/opt/immersive/control-node
 # IMMERSIVE_API_TOKEN for the Node-RED power endpoint comes from immersive.conf
 EnvironmentFile=-/run/immersive/control.env
+Environment=IMMERSIVE_STATE_DIR=/var/lib/immersive
+Environment=PYTHONUNBUFFERED=1
 ExecStartPre=/usr/bin/immersive-config.sh
+# Frame coordination must not wait for an ondemand frequency ramp.
+ExecStartPre=-/bin/sh -c 'echo performance > /sys/devices/system/cpu/cpufreq/policy0/scaling_governor 2>/dev/null'
 # clock runs as immersive-clock.service, so no --with-clock here
 ExecStart=/usr/bin/python3 /opt/immersive/control-node/controller.py
 Restart=always

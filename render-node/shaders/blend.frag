@@ -17,6 +17,11 @@ varying vec2 v_uv;     // source coordinate (inside source_region)
 varying vec2 v_edge;   // 0..1 across this node's output
 
 uniform sampler2D u_tex;
+uniform sampler2D u_chroma;
+uniform int u_nv12;
+uniform int u_wrap;
+uniform mat3 u_yuv_matrix;
+uniform vec3 u_yuv_offset;
 
 // Edge blend. Each edge: x = width (fraction of output, 0 disables), y = gamma.
 uniform vec2 u_blend_left;
@@ -31,8 +36,9 @@ uniform vec3 u_gain;
 uniform float u_gamma;
 uniform vec3 u_lift;
 
-// Test pattern: 0=video, 1=grid, 2=crosshair, 3=grey, 4=white, 5=color.
+// Test pattern: 0=video, 1=grid, 2=crosshair, 3=grey, 4=white, 5=color, 6=source-grid.
 uniform int u_pattern;
+uniform vec4 u_tile_region;     // local tile UV -> global panorama coordinates
 uniform vec3 u_pattern_color;   // for kind=color
 uniform vec2 u_tex_size;        // source size in px, for crisp grid lines
 
@@ -41,10 +47,27 @@ uniform vec2 u_tex_size;        // source size in px, for crisp grid lines
 float edge_alpha(float coord, float width, float gamma) {
     if (width <= 0.0) return 1.0;
     float t = clamp(coord / width, 0.0, 1.0);
-    return pow(t, gamma);
+    // Projector light output is approximately encoded_value^gamma. Convert
+    // the linear light weight back to an encoded multiplier, so complementary
+    // weights add to constant light instead of producing a dark overlap band.
+    return pow(t, 1.0 / gamma);
 }
 
 vec3 test_pattern() {
+    if (u_pattern == 6) {
+        // Recover global coordinates even when the current video is a cropped
+        // tile. Identical panorama positions must produce identical marks on
+        // neighbouring projectors, including positions beyond the 360° seam.
+        vec2 source = u_tile_region.xy + v_uv * u_tile_region.zw;
+        vec2 cell = vec2(fract(source.x) * 36.0, source.y * 8.0);
+        vec2 distance = min(fract(cell), 1.0 - fract(cell));
+        float grid = 1.0 - step(0.006, distance.x) * step(0.0125, distance.y);
+        // Distinct ten-degree bands disambiguate repeated grid intersections.
+        vec3 key = fract(floor(cell.x) * vec3(0.618034, 0.414214, 0.732051)
+                         + vec3(0.2, 0.5, 0.8));
+        vec3 background = vec3(0.08) + 0.4 * key + 0.03 * mod(floor(cell.y), 2.0);
+        return mix(background, vec3(1.0), grid);
+    }
     if (u_pattern == 3) return vec3(0.5);
     if (u_pattern == 4) return vec3(1.0);
     if (u_pattern == 5) return u_pattern_color;
@@ -71,7 +94,13 @@ vec3 test_pattern() {
 void main() {
     vec3 c;
     if (u_pattern == 0) {
-        c = texture2D(u_tex, v_uv).rgb;
+        vec2 uv = vec2(u_wrap == 1 ? fract(v_uv.x) : v_uv.x, v_uv.y);
+        if (u_nv12 == 1) {
+            vec2 chroma = texture2D(u_chroma, uv).ra;
+            c = u_yuv_matrix * (vec3(texture2D(u_tex, uv).r, chroma) + u_yuv_offset);
+        } else {
+            c = texture2D(u_tex, uv).rgb;
+        }
     } else {
         c = test_pattern();
     }

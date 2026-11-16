@@ -1,0 +1,81 @@
+<!doctype html><html><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
+<title>Calibration</title><style>
+*{box-sizing:border-box}body{margin:0;font:14px system-ui;background:#111;color:#eee}
+#top{display:flex;flex-wrap:wrap;gap:4px;padding:6px}
+button,select{font:inherit;padding:8px 10px;border-radius:6px;border:1px solid #555;background:#222;color:#eee}
+button.on{background:#2a5;border-color:#2a5}button:disabled{opacity:.35}
+#view{position:relative;background:#000}
+#live{width:100%;display:block;max-height:62vh;object-fit:contain}
+video{display:none}
+#hud{position:absolute;left:0;right:0;top:0;padding:6px 8px;font:bold 15px system-ui;color:#ff0;background:rgba(0,0,0,.55)}
+#ov{display:none}
+#msg{padding:4px 8px;min-height:1.4em;color:#fc6}
+#seams{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:4px 10px;padding:6px 8px}
+.s{display:flex;align-items:center;gap:6px;font:12px monospace}.s b{width:44px;text-align:right}
+.bar{flex:1;height:10px;background:#333;border-radius:5px;overflow:hidden}.bar i{display:block;height:10px;background:#c80}
+.done .bar i{background:#2a5}.done b{color:#2a5}
+#more{padding:6px 8px;color:#999}.bord{padding:2px 8px;font:12px monospace}.bord span{display:inline-block;min-width:28px;text-align:center;margin:2px;padding:2px 4px;border-radius:4px;background:#333}.bord span.ok{background:#2a5}#rep{white-space:pre-wrap;font:11px monospace}
+</style></head><body>
+<div id=top>
+<button id=start>Markers</button><button id=capture>Capture</button><button id=solve>Solve</button><button id=try>Try</button><button id=back>Back</button><button id=apply>Apply</button><button id=restore>Restore</button>
+<select id=camsel></select><select id=ressel></select><span id=zoombox></span>
+</div>
+<div id=view><canvas id=live></canvas><div id=hud>press Capture</div><canvas id=ov width=4 height=3></canvas><video id=v autoplay playsinline muted disablepictureinpicture></video></div>
+<div id=msg></div><div id=seams></div><div id=b-top class=bord></div><div id=b-floor class=bord></div>
+<details id=more><summary>more</summary><label><input type=checkbox id=ring checked> ring</label> <span id=camres></span><pre id=rep></pre><pre id=caps></pre></details>
+<script>
+const $=id=>document.getElementById(id),v=$('v'),ov=$('ov');let stream,cap=false,st={};
+const PRESETS=[[4032,3024],[3840,2160],[3264,2448],[2560,1920],[2560,1440],[1920,1440],[1920,1080],[1600,1200],[1280,960],[1280,720],[640,480]];
+function msg(t){$('msg').textContent=t||''}
+async function post(u,body){const r=await fetch(u,{method:'POST',body});const j=await r.json();if(j.error)throw new Error(j.error);return j}
+async function cam(id,res){if(stream)stream.getTracks().forEach(t=>t.stop());
+ const vc={deviceId:id?{exact:id}:undefined,zoom:true};
+ if(res){vc.width={exact:res[0]};vc.height={exact:res[1]}}else{vc.width={ideal:4032};vc.height={ideal:3024}}
+ try{stream=await navigator.mediaDevices.getUserMedia({video:vc})}catch(e){if(!res)throw e;vc.width={ideal:res[0]};vc.height={ideal:res[1]};stream=await navigator.mediaDevices.getUserMedia({video:vc})}
+ v.srcObject=stream;await v.play();const tr=stream.getVideoTracks()[0],ss=tr.getSettings();
+ $('camres').textContent=ss.width+'x'+ss.height;await listCams();
+ let caps={};try{caps=tr.getCapabilities()}catch(e){}
+ $('caps').textContent=JSON.stringify({label:tr.label,caps},null,1);
+ const mw=caps.width?caps.width.max:4032,mh=caps.height?caps.height.max:3024;
+ const opts=PRESETS.filter(([w,h])=>w<=mw&&h<=mh);if(!opts.some(([w,h])=>w==mw&&h==mh))opts.unshift([mw,mh]);
+ $('ressel').innerHTML=opts.map(([w,h])=>`<option ${w==ss.width&&h==ss.height?'selected':''}>${w}x${h}</option>`).join('');
+ if(caps.zoom&&caps.zoom.max>caps.zoom.min){const zs=[...new Set([caps.zoom.min,0.5,1,2].filter(z=>z>=caps.zoom.min&&z<=caps.zoom.max))].sort((a,b)=>a-b);
+  $('zoombox').innerHTML='<select id=zoomsel>'+zs.map(z=>`<option value=${z}>${z}x</option>`).join('')+'</select>';
+  $('zoomsel').onchange=e=>tr.applyConstraints({advanced:[{zoom:+e.target.value}]}).catch(err=>msg(err.message));}else $('zoombox').innerHTML='';}
+async function listCams(){const tr=stream&&stream.getVideoTracks()[0];const cur=tr&&tr.readyState=='live'?tr.getSettings().deviceId:null;
+ const devs=(await navigator.mediaDevices.enumerateDevices()).filter(d=>d.kind=='videoinput');
+ $('camsel').innerHTML=(cur?'':'<option value="">camera?</option>')+devs.map(d=>`<option value="${d.deviceId}" ${d.deviceId==cur?'selected':''}>${d.label||'camera'}</option>`).join('');}
+navigator.mediaDevices.addEventListener('devicechange',listCams);
+$('camsel').onchange=e=>cam(e.target.value).catch(err=>msg(err.message));
+$('ressel').onchange=e=>cam($('camsel').value,e.target.value.split('x').map(Number)).catch(err=>msg(err.message));
+cam().catch(e=>msg('camera: '+e.message));
+const live=$('live');(function paint(){if(v.videoWidth){if(live.width!=v.videoWidth){live.width=v.videoWidth;live.height=v.videoHeight}
+ live.getContext('2d').drawImage(v,0,0)}requestAnimationFrame(paint)})();
+async function loop(){while(true){if(!cap||st.mode!='markers'||!v.videoWidth){await new Promise(r=>setTimeout(r,300));continue}
+ const w=v.videoWidth,h=v.videoHeight,f=Math.min(1,2560/Math.max(w,h)),shot=document.createElement('canvas');
+ shot.width=Math.round(w*f);shot.height=Math.round(h*f);shot.getContext('2d').drawImage(v,0,0,shot.width,shot.height);
+ const blob=await new Promise(r=>shot.toBlob(r,'image/jpeg',0.95));
+ if(!blob||!blob.size){await new Promise(r=>setTimeout(r,300));continue}
+ try{draw(await post('/api/frame',blob),shot)}catch(e){msg(e.message)}}}
+function draw(d,shot){const nums=Object.keys(d.nodes||{}).map(n=>+n.replace(/^.*-/,'')).sort((a,b)=>a-b);
+ $('hud').textContent=(nums.length?'sees '+nums.join(' '):'no projector recognised')+(d.seams.length?'   ·   seams '+d.seams.map(x=>x.replace(/[^|]*-(\d+)/g,'$1')).join('  '):'');ov.width=shot.width;ov.height=shot.height;const c=ov.getContext('2d');c.drawImage(shot,0,0);
+ const fs=Math.max(20,Math.round(ov.width/30));c.lineWidth=Math.max(2,ov.width/700);c.strokeStyle='#fff';
+ Object.entries(d.quads||{}).forEach(([n,qs])=>{qs.forEach(q=>{c.beginPath();q.forEach((p,i)=>i?c.lineTo(p[0],p[1]):c.moveTo(p[0],p[1]));c.closePath();c.stroke()});
+  const p=d.boxes[n],num=n.replace(/^.*-/,'');c.font=`bold ${fs*2}px system-ui`;c.fillStyle='#000';c.fillText(num,p[0]+3,p[1]+3);c.fillStyle='#ff0';c.fillText(num,p[0],p[1]);});}
+function poll(){fetch('/api/status').then(r=>r.json()).then(s=>{st=s;const m=s.mode=='markers';
+ $('start').disabled=s.busy;$('capture').disabled=!m;$('capture').className=cap?'on':'';$('capture').textContent=cap?'Capturing':'Capture';
+ $('solve').disabled=s.busy||!m;$('apply').disabled=s.busy||!s.report;$('try').disabled=s.busy||!s.report||s.mode=='idle';$('back').disabled=s.busy||s.mode=='idle';
+ $('try').className=s.mode=='preview'?'on':'';if(s.mode=='preview'&&cap){cap=false;}$('ring').checked=s.ring;
+ if(s.busy||/^(FAILED|Solved|Calibration|Trying|Markers are back|Room restored)/.test(s.msg))msg(s.msg);
+ $('seams').innerHTML=(s.seams||[]).map(x=>`<div class="s ${x.done?'done':''}"><b>${x.seam.replace(/[^|]*-(\d+)/g,'$1')}</b><span class=bar><i style="width:${Math.min(100,x.rows/0.8*100)}%"></i></span></div>`).join('');
+ ['top','floor'].forEach(kind=>{$('b-'+kind).innerHTML=kind.padEnd(5,' ').replace(/ /g,'&nbsp;')+' '+(s.order||[]).map(n=>`<span class="${(s[kind]||{})[n]>=(kind=='top'?3:5)?'ok':''}">${n.replace(/^.*-/,'')}</span>`).join('')});
+ $('rep').textContent=s.report?JSON.stringify(s.report.seams,null,1):'';})}
+$('start').onclick=()=>{if(st.mode!='markers'||confirm('Re-send markers and clear captured data?'))post('/api/start?ring='+($('ring').checked?1:0)).then(poll).catch(e=>msg(e.message))};
+$('capture').onclick=()=>{cap=!cap;if(!cap)$('hud').textContent='paused';poll()};
+$('solve').onclick=()=>{msg('solving…');post('/api/solve').then(poll).catch(e=>msg(e.message))};
+$('try').onclick=()=>{msg('sending calibration…');post('/api/try').then(poll).catch(e=>msg(e.message))};
+$('back').onclick=()=>{post('/api/back').then(poll).catch(e=>msg(e.message))};
+$('apply').onclick=()=>{if(confirm('Write calibration to all nodes?'))post('/api/apply').then(poll).catch(e=>msg(e.message))};
+$('restore').onclick=()=>{if(confirm('Restore the room as before?'))post('/api/restore').then(poll).catch(e=>msg(e.message))};
+setInterval(poll,800);poll();loop();
+</script></body></html>

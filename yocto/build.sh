@@ -12,24 +12,11 @@ echo "First run takes a while (1-3 hours)."
 echo ""
 
 mkdir -p output
-echo "Removing previous build artifacts..."
-rm -fv output/immersive-image-immersive-pi.img \
-       output/immersive-rootfs.ext4 \
-       output/immersive-boot.tar
-echo ""
-
 # Vendor the app into the layer so the Docker context (yocto/) carries it. The
 # image recipe installs render-node/ + control-node/ from here.
 echo "Staging app into the layer..."
 APPDST="$SCRIPT_DIR/recipes-immersive/immersive/files/app"
-rm -rf "$APPDST"
-mkdir -p "$APPDST"
-for d in render-node control-node; do
-    rsync -a --delete \
-        --exclude '__pycache__' --exclude '*.pyc' \
-        --exclude 'config.json' --exclude '*.mp4' \
-        "$REPO_ROOT/$d" "$APPDST/"
-done
+python3 "$REPO_ROOT/tools/stage_image_app.py" --out "$APPDST"
 echo "  staged: $(du -sh "$APPDST" | cut -f1)"
 echo ""
 
@@ -37,9 +24,10 @@ echo ""
 VERSION_FILE="$SCRIPT_DIR/VERSION"
 CUR_VER=$(cat "$VERSION_FILE" 2>/dev/null || echo "pi-v1.0.0")
 _b=${CUR_VER#pi-v}; _maj=${_b%%.*}; _r=${_b#*.}; _min=${_r%%.*}; _pat=${_r#*.}
-IMMERSIVE_VERSION="pi-v${_maj}.${_min}.$((_pat + 1))"
-echo "$IMMERSIVE_VERSION" > "$VERSION_FILE"
+IMMERSIVE_VERSION=${IMMERSIVE_VERSION:-"pi-v${_maj}.${_min}.$((_pat + 1))"}
+printf '%s' "$IMMERSIVE_VERSION" | grep -Eq '^pi-v[0-9]+\.[0-9]+\.[0-9]+$' || { echo "Invalid image version" >&2; exit 1; }
 export IMMERSIVE_VERSION
+BUILD_OUTPUT=$(mktemp -d "$SCRIPT_DIR/output/.building-${IMMERSIVE_VERSION}-XXXXXX")
 echo "Build version: $IMMERSIVE_VERSION"
 echo ""
 
@@ -47,7 +35,7 @@ docker build -t immersive-yocto .
 docker run --rm \
     -e IMMERSIVE_VERSION="$IMMERSIVE_VERSION" \
     -v immersive-yocto-cache:/home/builder/build \
-    -v "$(pwd)/output":/output \
+    -v "$BUILD_OUTPUT":/output \
     immersive-yocto \
     bash -c '
         cd /home/builder
@@ -78,12 +66,14 @@ docker run --rm \
         # Shrink rootfs for OTA bundles.
         SHRUNK=/tmp/rootfs.shrunk.ext4
         cp --sparse=never "$ROOTFS_SRC" "$SHRUNK"
-        e2fsck -f -y "$SHRUNK" || true
+        # e2fsck 1/2 means corrected; higher codes mean the artifact is unsafe.
+        e2fsck -f -y "$SHRUNK" || [ "$?" -le 2 ]
         resize2fs -M "$SHRUNK"
-        e2fsck -f -y "$SHRUNK" || true
+        e2fsck -f -y "$SHRUNK" || [ "$?" -le 2 ]
         BLOCKS=$(dumpe2fs -h "$SHRUNK" 2>/dev/null | awk -F: "/^Block count/{print \$2}" | tr -d " ")
         BSIZE=$(dumpe2fs -h "$SHRUNK" 2>/dev/null | awk -F: "/^Block size/{print \$2}" | tr -d " ")
         truncate -s $((BLOCKS * BSIZE)) "$SHRUNK"
+        e2fsck -f -n "$SHRUNK"
         cp "$SHRUNK" /output/immersive-rootfs.ext4
         rm -f "$SHRUNK"
 
@@ -109,7 +99,21 @@ PY
         rm -rf /tmp/bootcontents /tmp/boot.img
     '
 
+for artifact in immersive-image-immersive-pi.img immersive-rootfs.ext4 immersive-boot.tar; do
+    [ -s "$BUILD_OUTPUT/$artifact" ] || { echo "Missing artifact: $artifact" >&2; exit 1; }
+done
+if [ -d "$SCRIPT_DIR/output/$IMMERSIVE_VERSION" ]; then
+    mv "$SCRIPT_DIR/output/$IMMERSIVE_VERSION" "$SCRIPT_DIR/output/${IMMERSIVE_VERSION}-previous-$(date +%s)"
+fi
+mv "$BUILD_OUTPUT" "$SCRIPT_DIR/output/$IMMERSIVE_VERSION"
+for artifact in immersive-image-immersive-pi.img immersive-rootfs.ext4 immersive-boot.tar; do
+    if [ -f "$SCRIPT_DIR/output/$artifact" ] && [ ! -L "$SCRIPT_DIR/output/$artifact" ]; then
+        mv "$SCRIPT_DIR/output/$artifact" "$SCRIPT_DIR/output/${artifact}-previous-$(date +%s)"
+    fi
+    ln -sfn "$IMMERSIVE_VERSION/$artifact" "$SCRIPT_DIR/output/$artifact"
+done
+echo "$IMMERSIVE_VERSION" > "$VERSION_FILE"
 echo ""
-echo "Done! Image at: output/immersive-image-immersive-pi.img"
+echo "Done! Image at: output/$IMMERSIVE_VERSION/immersive-image-immersive-pi.img"
 echo "Flash a seed card: sudo dd if=output/immersive-image-immersive-pi.img of=/dev/sdX bs=4M conv=fsync"
 echo "Then edit immersive.conf on the boot partition to set each node's role + id."

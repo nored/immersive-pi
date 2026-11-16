@@ -1,0 +1,43 @@
+{
+  "id": "paragliding-tolmin-5760",
+  "title": "Mountain paragliding above Tolmin",
+  "kind": "paragliding",
+  "creator": "Sokole ONE",
+  "license": "CC BY 3.0",
+  "license_url": "https://creativecommons.org/licenses/by/3.0/",
+  "source_page": "https://commons.wikimedia.org/wiki/File:2021_06_12_PARA_360_Tolmin_SokoleONE_2_-_UP_Kangri.webm",
+  "file": "paragliding-tolmin-5760.webm",
+  "sha256": "edf4c06a75a9c39ed645ef24917331ce26c0e271f68c0d56d76bb46419a0b473",
+  "metadata": {
+    "programs": [],
+    "stream_groups": [],
+    "streams": [
+      {
+        "codec_name": "vp9",
+        "codec_type": "video",
+        "width": 5760,
+        "height": 2880,
+        "r_frame_rate": "25/1",
+        "side_data_list": [
+          {},
+          {}
+        ]
+      },
+      {
+        "codec_name": "opus",
+        "codec_type": "audio",
+        "r_frame_rate": "0/0"
+      }
+    ],
+    "format": {
+      "duration": "50.561000"
+    }
+  },
+  "projection": "equirectangular 360 mono",
+  "status": "published; hash-verified on all 12 nodes",
+  "native_room_package": "paragliding-tolmin-5760-full-mapped.immersive.json",
+  "attribution": "Mountain paragliding above Tolmin \u2014 Sokole ONE. Source: https://commons.wikimedia.org/wiki/File:2021_06_12_PARA_360_Tolmin_SokoleONE_2_-_UP_Kangri.webm. License: https://creativecommons.org/licenses/by/3.0/. Room conversion: geometry remapping, wall-view crop, frame-rate resampling and silent output.",
+  "native_frames": 1488,
+  "ready_for_room": true,
+  "publish_evidence": "diagnostics/paragliding-full-publish.json"
+}

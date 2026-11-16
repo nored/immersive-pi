@@ -9,7 +9,8 @@ inherit core-image
 IMAGE_FEATURES += "ssh-server-dropbear"
 
 # SSH: install authorized_keys, key-only login.
-IMMERSIVE_AUTHORIZED_KEYS ??= "${THISDIR}/../../secrets/authorized_keys"
+IMMERSIVE_AUTHORIZED_KEYS ??= "${IMMERSIVE_LAYER_DIR}/secrets/authorized_keys"
+do_rootfs[file-checksums] += "${IMMERSIVE_AUTHORIZED_KEYS}:True"
 ROOTFS_POSTPROCESS_COMMAND += "immersive_install_ssh_key;"
 immersive_install_ssh_key() {
     if [ -f "${IMMERSIVE_AUTHORIZED_KEYS}" ]; then
@@ -18,6 +19,8 @@ immersive_install_ssh_key() {
             ${IMAGE_ROOTFS}/root/.ssh/authorized_keys
         install -d ${IMAGE_ROOTFS}${sysconfdir}/default
         echo 'DROPBEAR_EXTRA_ARGS="-s -g"' > ${IMAGE_ROOTFS}${sysconfdir}/default/dropbear
+    else
+        bbfatal "Authorized SSH key missing: ${IMMERSIVE_AUTHORIZED_KEYS}"
     fi
 }
 
@@ -40,6 +43,7 @@ IMAGE_INSTALL = " \
     libdrm \
     \
     python3 \
+    python3-modules \
     python3-numpy \
     python3-pillow \
     python3-websockets \
@@ -74,16 +78,10 @@ immersive_set_version() {
     echo "${IMMERSIVE_VERSION}" > ${IMAGE_ROOTFS}${sysconfdir}/immersive-version
 }
 
-# Seed a commented immersive.conf onto the boot FAT so the field can set role,
-# node id, control host, and the power/API token without reflashing.
-ROOTFS_POSTPROCESS_COMMAND += "immersive_seed_bootconf;"
-immersive_seed_bootconf() {
-    install -d ${IMAGE_ROOTFS}/boot
-    if [ -f ${IMAGE_ROOTFS}${datadir}/immersive/immersive.conf-example ]; then
-        install -m 0644 ${IMAGE_ROOTFS}${datadir}/immersive/immersive.conf-example \
-            ${IMAGE_ROOTFS}/boot/immersive.conf
-    fi
-}
+# WIC builds the FAT from DEPLOY_DIR_IMAGE, separately from IMAGE_ROOTFS/boot.
+# Deploy the operator-editable template there, not underneath a later mount.
+IMAGE_BOOT_FILES:append = " immersive.conf"
+do_image_wic[depends] += "immersive-bootconf:do_deploy"
 
 # Wired network stack: systemd-networkd + systemd-resolved enabled at boot. No
 # NetworkManager, no connman (excluded in local.conf). networkd reads the DHCP

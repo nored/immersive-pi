@@ -18,12 +18,15 @@ import subprocess
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from shared.http_server import make_http_server
 
 BOOT_CONF_PATHS = ["/boot/firmware/immersive.conf", "/boot/immersive.conf",
                    "/etc/immersive.conf"]
 # fields shown/editable on the admin page, in display order
 EDITABLE = ["role", "node", "hostname", "control_host", "admin_password",
-            "allow_poweroff", "timezone", "api_token"]
+            "allow_poweroff", "allow_reboot", "timezone", "api_token"]
 
 
 def conf_path() -> str:
@@ -49,7 +52,16 @@ def write_bootconfig(updates: dict) -> dict:
     cfg = read_bootconfig()
     for k, v in (updates or {}).items():
         if k in EDITABLE:
-            cfg[k] = str(v)
+            value = str(v)
+            if "\n" in value or "\r" in value:
+                raise ValueError(f"{k} must fit on one line")
+            if k in ("allow_poweroff", "allow_reboot"):
+                value = value.lower()
+                if value not in ("true", "false", ""):
+                    raise ValueError(f"{k} must be true or false")
+            if k == "role" and value not in ("render", "control"):
+                raise ValueError("role must be render or control")
+            cfg[k] = value
     order = EDITABLE + [k for k in cfg if k not in EDITABLE]
     lines = [f"{k}={cfg[k]}" for k in order if k in cfg and cfg[k] != ""]
     Path(conf_path()).write_text("\n".join(lines) + "\n")
@@ -89,25 +101,34 @@ ADMIN_HTML = """<!doctype html><html><head><meta charset=utf-8>
  .dim{color:#8a96a6;font-size:12px}
 </style></head><body>
 <header>immersive node admin</header><main>
+<p id=status role=status></p>
 <h2>Health</h2><table id=health><tr><td>loading…</td></tr></table>
 <h2>Configuration</h2><div id=cfg></div>
 <div style=margin-top:14px><button onclick=save()>Save &amp; reboot</button>
 <button class=warn onclick=reboot()>Reboot</button></div>
 <p class=dim>Saved to immersive.conf on the boot partition; the node reboots to apply.</p>
 </main><script>
-async function load(){
- let h=await (await fetch('/api/health')).json();
- document.getElementById('health').innerHTML=Object.entries(h)
-   .map(([k,v])=>`<tr><td>${k}</td><td>${v}</td></tr>`).join('');
- let c=await (await fetch('/api/config')).json();
+async function request(path,options={}){
+ let response=await fetch('api/'+path,{credentials:'same-origin',cache:'no-store',...options});
+ if(!response.ok)throw new Error(response.status===401?'Login failed or expired. Reload to sign in.':`Request failed (${response.status})`);
+ return response.json();
+}
+async function load(initial=false){try{
+ let h=await request('health');
+ let table=document.getElementById('health');table.replaceChildren();
+ for(let [k,v] of Object.entries(h)){let row=document.createElement('tr');
+   for(let value of [k,typeof v==='object'?JSON.stringify(v):String(v)]){let cell=document.createElement('td');cell.textContent=value;row.appendChild(cell);}table.appendChild(row);}
+ if(!initial)return;
+ let c=await request('config');
  document.getElementById('cfg').innerHTML=c.editable.map(k=>
    `<div class=row><label>${k}</label><input id="f_${k}" value="${(c.config[k]||'').replace(/"/g,'&quot;')}"></div>`).join('');
-}
+ document.getElementById('status').textContent='';
+ }catch(e){document.getElementById('status').textContent=e.message;}}
 function gather(){let o={};document.querySelectorAll('[id^=f_]').forEach(i=>o[i.id.slice(2)]=i.value);return o;}
-async function save(){await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},
-   body:JSON.stringify({config:gather()})});reboot();}
-async function reboot(){if(confirm('Reboot this node?')){await fetch('/api/reboot',{method:'POST'});alert('rebooting');}}
-load();setInterval(load,5000);
+async function save(){try{await request('config',{method:'POST',headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({config:gather()})});await reboot();}catch(e){document.getElementById('status').textContent=e.message;}}
+async function reboot(){if(confirm('Reboot this node?')){try{await request('reboot',{method:'POST'});document.getElementById('status').textContent='Reboot requested';}catch(e){document.getElementById('status').textContent=e.message;}}}
+load(true);setInterval(()=>load(false),5000);
 </script></body></html>"""
 
 
@@ -120,7 +141,8 @@ class AdminHandler(BaseHTTPRequestHandler):
         if check_auth(self.headers.get("Authorization"), self.password):
             return True
         self.send_response(401)
-        self.send_header("WWW-Authenticate", 'Basic realm="immersive"')
+        self.send_header("WWW-Authenticate", 'Basic realm="immersive", charset="UTF-8"')
+        self.send_header("Content-Length", "0")
         self.end_headers()
         return False
 
@@ -133,9 +155,17 @@ class AdminHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
+        if self.path.split("?", 1)[0] in ("/admin", "/"):
+            self.send_response(302)
+            self.send_header("Location", "/admin/")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         if not self._auth():
             return
         path = self.path.split("?", 1)[0]
+        if path.startswith("/admin/api/"):
+            path = path[len("/admin"):]
         if path in ("/admin", "/admin/", "/"):
             body = ADMIN_HTML.encode()
             self.send_response(200)
@@ -154,13 +184,18 @@ class AdminHandler(BaseHTTPRequestHandler):
         if not self._auth():
             return
         path = self.path.split("?", 1)[0]
+        if path.startswith("/admin/api/"):
+            path = path[len("/admin"):]
         if path == "/api/config":
             n = int(self.headers.get("Content-Length", 0) or 0)
             try:
                 body = json.loads(self.rfile.read(n) or b"{}")
             except Exception:
                 self._json(400, {"error": "bad json"}); return
-            cfg = write_bootconfig(body.get("config", {}))
+            try:
+                cfg = write_bootconfig(body.get("config", {}))
+            except ValueError as exc:
+                self._json(400, {"error": str(exc)}); return
             self._json(200, {"saved": True, "config": cfg})
         elif path == "/api/reboot":
             self._json(200, {"rebooting": self.allow_reboot})
@@ -178,6 +213,6 @@ def make_admin_server(port: int, password: str, health_fn, allow_reboot: bool = 
     AdminHandler.password = password
     AdminHandler.health_fn = staticmethod(health_fn)
     AdminHandler.allow_reboot = allow_reboot
-    srv = ThreadingHTTPServer(("0.0.0.0", port), AdminHandler)
+    srv = make_http_server(port, AdminHandler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     return srv

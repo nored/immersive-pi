@@ -1,0 +1,43 @@
+{
+  "id": "drone-inspire2-8k",
+  "title": "360\u00b0 drone flight \u2014 DJI Inspire 2 / Insta360 Pro 2",
+  "kind": "drone",
+  "source_page": "https://commons.wikimedia.org/wiki/File:Test_Insta360_Pro2_on_DJI_Inspire2_8K_59,9_fps_-_YouTube.webm",
+  "creator": "KinoLet",
+  "license": "CC BY 3.0",
+  "license_url": "https://creativecommons.org/licenses/by/3.0/",
+  "attribution": "KinoLet \u2014 Test Insta360 Pro2 on DJI Inspire2 8K 59,9 fps; CC BY 3.0; room version geometrically remapped, cropped to wall view, resampled and silent.",
+  "file": "drone-inspire2-8k.webm",
+  "sha256": "b1396017de4ba26f34c27c66ab83da6555e98000533855173091ba81fb4762b3",
+  "metadata": {
+    "programs": [],
+    "stream_groups": [],
+    "streams": [
+      {
+        "codec_name": "vp9",
+        "codec_type": "video",
+        "width": 7680,
+        "height": 3840,
+        "r_frame_rate": "19001/317",
+        "side_data_list": [
+          {}
+        ]
+      },
+      {
+        "codec_name": "opus",
+        "codec_type": "audio",
+        "r_frame_rate": "0/0"
+      }
+    ],
+    "format": {
+      "duration": "230.781000"
+    }
+  },
+  "projection": "eac",
+  "native_room_package": "drone-city-full-mapped.immersive.json",
+  "status": "published; hash-verified on all 12 nodes",
+  "projection_review": "Decoded frames verified using v360 EAC to equirectangular: continuous horizon and terrain recovered.",
+  "ready_for_room": true,
+  "native_frames": 6901,
+  "publish_evidence": "diagnostics/drone-full-publish.json"
+}

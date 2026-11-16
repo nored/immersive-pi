@@ -7,7 +7,7 @@ RUN apt-get update && apt-get install -y \
     chrpath socat cpio python3 python3-pip python3-pexpect \
     xz-utils debianutils iputils-ping python3-git python3-jinja2 \
     python3-subunit zstd liblz4-tool file locales libacl1 sudo \
-    lz4 mtools \
+    lz4 mtools e2fsprogs \
     && rm -rf /var/lib/apt/lists/*
 
 RUN locale-gen en_US.UTF-8
@@ -19,11 +19,17 @@ USER builder
 WORKDIR /home/builder
 
 ARG YOCTO_RELEASE=scarthgap
+ARG POKY_REV=6b7c1066f778db5a6b3e35400617b10342988fa8
+ARG RASPBERRYPI_REV=018d44467c4f09eb63f8ea5e86e85d755250cf89
+ARG OPENEMBEDDED_REV=2db6aece32c7f8ebf6015b468e1b4e21de072e3b
 
 # HTTPS mirrors (git:// endpoints are often firewalled).
 RUN git clone --depth 1 -b ${YOCTO_RELEASE} https://github.com/yoctoproject/poky.git && \
     git clone --depth 1 -b ${YOCTO_RELEASE} https://github.com/agherzan/meta-raspberrypi.git && \
-    git clone --depth 1 -b ${YOCTO_RELEASE} https://github.com/openembedded/meta-openembedded.git
+    git clone --depth 1 -b ${YOCTO_RELEASE} https://github.com/openembedded/meta-openembedded.git && \
+    git -C poky fetch --depth 1 origin ${POKY_REV} && git -C poky checkout --detach ${POKY_REV} && \
+    git -C meta-raspberrypi fetch --depth 1 origin ${RASPBERRYPI_REV} && git -C meta-raspberrypi checkout --detach ${RASPBERRYPI_REV} && \
+    git -C meta-openembedded fetch --depth 1 origin ${OPENEMBEDDED_REV} && git -C meta-openembedded checkout --detach ${OPENEMBEDDED_REV}
 
 # The build context is the yocto/ layer (build.sh vendors the app into
 # recipes-immersive/immersive/files/app first).
@@ -67,8 +73,8 @@ PARALLEL_MAKE:pn-opencv = "-j 2"
 IMAGE_FSTYPES = "wic ext4"
 WKS_FILE = "immersive-ab.wks.in"
 LICENSE_FLAGS_ACCEPTED = "commercial"
-BB_NUMBER_THREADS ?= "8"
-PARALLEL_MAKE ?= "-j 8"
+BB_NUMBER_THREADS = "4"
+PARALLEL_MAKE = "-j 4"
 INHERIT += "rm_work"
 LOCAL
 

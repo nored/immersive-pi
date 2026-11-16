@@ -16,6 +16,9 @@ control_host=pi-13.local
 # hostname -> mDNS <hostname>.local
 hostname=pi-01
 
+# Common HDMI timing for this room.
+display_mode=1280x800@60
+
 # admin web login (user: admin) at http://<hostname>.local:8080/admin
 # Default is this node's id if left empty.
 admin_password=
@@ -25,7 +28,8 @@ admin_password=
 api_token=
 
 # render node only: allow the hibernate command to power the Pi off.
-allow_poweroff=true
+allow_poweroff=false
+allow_reboot=true
 
 # optional timezone for the control node's logs/commits.
 timezone=Europe/Berlin

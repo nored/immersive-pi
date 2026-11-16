@@ -24,6 +24,8 @@ S = "${WORKDIR}"
 
 inherit systemd
 
+DEPENDS += "git-native"
+
 # Only the role dispatcher is auto-enabled; it starts render OR control services
 # based on immersive.conf. Networking is plain DHCP (shipped eth0 config).
 SYSTEMD_SERVICE:${PN} = "immersive-role.service"
@@ -38,10 +40,23 @@ do_install() {
     install -d ${D}/opt/immersive
     cp -r ${WORKDIR}/app/render-node  ${D}/opt/immersive/
     cp -r ${WORKDIR}/app/control-node ${D}/opt/immersive/
+    cp -r ${WORKDIR}/app/shared       ${D}/opt/immersive/
+    install -m 0644 ${WORKDIR}/app/runtime-manifest.json ${D}/opt/immersive/runtime-manifest.json
     # never ship a dev checkout's concrete config or generated media
     rm -f  ${D}/opt/immersive/render-node/config.json
+    rm -f  ${D}/opt/immersive/control-node/room-model.json
     find ${D}/opt/immersive -name '__pycache__' -type d -prune -exec rm -rf {} +
     find ${D}/opt/immersive -name '*.mp4' -delete
+
+    # Calibration commits need their own repository on a fresh appliance.
+    # No sample hooks: the default template includes a Perl-only watcher.
+    git -C ${D}/opt/immersive/control-node init -q --initial-branch=calibration --template=
+    git -C ${D}/opt/immersive/control-node config user.name "Immersive calibration"
+    git -C ${D}/opt/immersive/control-node config user.email "immersive@localhost"
+    install -d ${D}/opt/immersive/control-node/.git/info
+    printf '*\n!room-model.json\n' > ${D}/opt/immersive/control-node/.git/info/exclude
+    # git-native bypasses pseudo; normalize ownership before package hashing.
+    chown -R root:root ${D}/opt/immersive
 
     install -d ${D}${bindir}
     install -m 0755 ${WORKDIR}/immersive-role.sh    ${D}${bindir}/immersive-role.sh

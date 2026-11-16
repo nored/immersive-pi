@@ -1,0 +1,122 @@
+{
+  "date": "2026-11-16",
+  "installation": "Dortmund: 1 control node and 12 render nodes",
+  "session_state": "wrapped_up_at_operator_request_while_final_movie_is_playing",
+  "output": {
+    "width": 1280,
+    "height": 800,
+    "render_nodes": 12,
+    "browser_video_preview": false
+  },
+  "deployed_runtime": "5e43a664e9239851",
+  "validation": {
+    "runtime_browser_suite": {
+      "passed": 274,
+      "skipped": 13,
+      "command": "docker run --rm -v \"$PWD:/workspace\" -w /workspace immersive-browser-test python3 -m pytest -q tests"
+    },
+    "host_capture_conversion_suite": {
+      "passed": 87,
+      "command": "python -m pytest -q tests/test_phone_capture.py tests/test_live_scan.py tests/test_pose_registration.py tests/test_video_projection.py tests/test_library_conversion.py tests/test_h264_timing.py tests/test_seam_candidate.py"
+    },
+    "full_passes": [
+      {
+        "media": "paragliding-tolmin-5760-full-mapped.immersive.json",
+        "result": "played_once",
+        "nodes": 12,
+        "holds": 0
+      },
+      {
+        "media": "noaa-sea-lion-full-mapped.immersive.json",
+        "result": "played_once",
+        "nodes": 12,
+        "holds": 0
+      }
+    ]
+  },
+  "media": {
+    "rendering": "Full visual picture tracks, silent, common 521875/17451 cadence, native per-node files",
+    "mapping": "Experimental scan-derived geometry baked into clips; saved room model unchanged",
+    "source_catalog": "test-media/media-library/catalog.json",
+    "models": "test-media/mapping/experimental-dortmund.models.json",
+    "baseline": "test-media/mapping/experimental-dortmund.baseline.json",
+    "packages": [
+      {
+        "id": "drone-inspire2-8k",
+        "manifest": "drone-city-full-mapped.immersive.json",
+        "frames": 6901,
+        "duration_seconds": 230.76282826347307,
+        "cached_nodes": 12
+      },
+      {
+        "id": "noaa-serengeti",
+        "manifest": "underwater-serengeti-full-mapped.immersive.json",
+        "frames": 12180,
+        "duration_seconds": 407.28753053892217,
+        "cached_nodes": 12
+      },
+      {
+        "id": "paragliding-tolmin-5760",
+        "manifest": "paragliding-tolmin-5760-full-mapped.immersive.json",
+        "frames": 1488,
+        "duration_seconds": 49.75729437125749,
+        "cached_nodes": 12
+      },
+      {
+        "id": "noaa-sea-lion",
+        "manifest": "noaa-sea-lion-full-mapped.immersive.json",
+        "frames": 5471,
+        "duration_seconds": 182.9449983233533,
+        "cached_nodes": 12
+      },
+      {
+        "id": "nasa-alaska-glaciers-5120",
+        "manifest": "nasa-alaska-glaciers-5120-full-mapped.immersive.json",
+        "frames": 20452,
+        "duration_seconds": 683.895285269461,
+        "cached_nodes": 12
+      }
+    ]
+  },
+  "acceleration": {
+    "gpu": "Apple M3 / OpenCL mapping and VideoToolbox video encode",
+    "short_warm_benchmark_scene_fps": 25,
+    "prior_full_render_scene_fps": 8.5,
+    "benchmark_limitation": "Short 180-frame benchmark; full-length throughput depends on codec and source projection",
+    "mapping_max_rgb_rounding_difference": 1,
+    "h264_encoding_lossless": false,
+    "missing_sps_timing_fix": "Remux with added VUI timing; compressed picture bytes and decoded pixels preserved"
+  },
+  "capture": {
+    "id": "8c303c1a-c0bf-4c25-a858-c0d1a69cf6dd",
+    "uploaded_selected_frames": 1937,
+    "highest_frame_index": 2008,
+    "pose_discontinuities": 3,
+    "recovery": "Four pose segments registered through common QR anchors",
+    "automatic_acquisition_complete": false,
+    "production_calibration_validated": false
+  },
+  "open_work": [
+    "Diagnose intermittent frame deadlines and presentation-skew failures on longer runs. Reported software skew is not optical genlock.",
+    "Validate global seams, nonplanar surfaces and radiometric blending; held-out scan residuals exceed the production target.",
+    "Implement reliable automatic live scan completion and acquisition guidance.",
+    "Rebuild Yocto image with the current runtime and perform a physical boot test. Existing local image predates the deployed runtime."
+  ],
+  "local_evidence": [
+    "diagnostics/current-validation.json",
+    "diagnostics/session-final-runtime-tests.log",
+    "diagnostics/session-final-host-tests.log",
+    "diagnostics/library-full-conversions/conversion-report.json"
+  ],
+  "excluded_artifacts": "Raw phone recordings, generated media, build archives and signing material remain local.",
+  "final_viewing": {
+    "media": "nasa-alaska-glaciers-5120-full-mapped.immersive.json",
+    "state": "playing",
+    "complete_pass_verified": false,
+    "elapsed_seconds_at_wrap": 159.8,
+    "nodes_presenting": 12,
+    "holds": 0,
+    "stop_after_current_pass": true,
+    "local_evidence": "diagnostics/alaska-full-viewing.json"
+  }
+}

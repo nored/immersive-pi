@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Calibration camera</title>
+<style>
+body{margin:0;background:#101722;color:#e7eef6;font:16px system-ui,sans-serif}main{max-width:1100px;margin:auto;padding:24px}h1{font-size:28px}p{line-height:1.5;color:#bdcadd}.controls{display:flex;gap:12px;flex-wrap:wrap;margin:20px 0}button,select{font:inherit;padding:10px 15px;border:1px solid #64758e;border-radius:6px;background:#25374e;color:white}button:disabled{opacity:.45}video{width:100%;max-height:65vh;background:black;border-radius:8px;object-fit:contain}#status{min-height:1.5em}a{color:#9ed3ff}
+</style>
+</head>
+<body><main>
+<h1>Calibration camera</h1>
+<p>Preview this computer’s camera. Position it so two neighbouring projector images and their overlap are visible, then keep it still. This page does not change the room configuration.</p>
+<div class="controls"><select id="camera" aria-label="Camera"><option value="">Default camera</option></select><button id="start">Start camera</button><button id="stop" disabled>Stop camera</button><button id="capture" disabled>Save still image</button></div>
+<p id="status" role="status">Camera is off. No microphone is requested.</p>
+<video id="preview" autoplay playsinline muted></video>
+<p>Save a still image to inspect focus, exposure and overlap visibility before collecting calibration patterns. A better camera alone does not align the projectors.</p>
+</main><script>
+'use strict';
+const video=document.getElementById('preview'),picker=document.getElementById('camera'),status=document.getElementById('status');
+const start=document.getElementById('start'),stop=document.getElementById('stop'),capture=document.getElementById('capture');
+let stream=null;
+function stopCamera(){if(stream)stream.getTracks().forEach(t=>t.stop());stream=null;video.srcObject=null;stop.disabled=true;capture.disabled=true;start.disabled=false;status.textContent='Camera is off.';}
+async function startCamera(){
+ stopCamera();start.disabled=true;
+ try{
+  if(!window.isSecureContext||!navigator.mediaDevices?.getUserMedia)throw new Error('Camera access requires HTTPS or a localhost connection. Open the local calibration link.');
+  status.textContent='Waiting for camera permission…';
+  stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{...(picker.value?{deviceId:{exact:picker.value}}:{}),width:{ideal:1920},height:{ideal:1080}}});
+  video.srcObject=stream;await video.play();
+  const settings=stream.getVideoTracks()[0].getSettings();
+  const devices=await navigator.mediaDevices.enumerateDevices();
+  picker.replaceChildren();
+  devices.filter(d=>d.kind==='videoinput').forEach(d=>{const o=document.createElement('option');o.value=d.deviceId;o.textContent=d.label||'Camera';picker.append(o)});
+  if(settings.deviceId)picker.value=settings.deviceId;
+  status.textContent=`Camera ready · ${video.videoWidth} × ${video.videoHeight}${settings.frameRate?` · ${Math.round(settings.frameRate)} fps`:''}`;
+  stop.disabled=false;capture.disabled=false;
+ }catch(e){stopCamera();status.textContent=`Camera unavailable: ${e.message}`;}
+ finally{start.disabled=false;}
+}
+start.onclick=startCamera;stop.onclick=stopCamera;picker.onchange=()=>{if(stream)startCamera()};
+capture.onclick=()=>{if(!stream||!video.videoWidth)return;const canvas=document.createElement('canvas');canvas.width=video.videoWidth;canvas.height=video.videoHeight;canvas.getContext('2d').drawImage(video,0,0);canvas.toBlob(blob=>{if(!blob)return;const url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download=`calibration-camera-${new Date().toISOString().replaceAll(':','-')}.png`;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000)},'image/png')};
+window.addEventListener('pagehide',stopCamera);
+</script></body></html>

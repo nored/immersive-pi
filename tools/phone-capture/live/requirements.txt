@@ -1,0 +1,4 @@
+numpy>=1.24,<3
+Pillow>=10,<13
+websockets>=13,<17
+zeroconf>=0.140,<1

@@ -129,8 +129,8 @@ rm -f "$BOOT_TAR" "$ART"
 # on rootfs; the copy on the boot FAT is the real source, but carry /etc too).
 mkdir -p "$STATE_DIR/probe"
 if mount "$INACTIVE_DEV" "$STATE_DIR/probe" 2>/dev/null; then
-    [ -f /etc/immersive.conf ] && install -m 0644 /etc/immersive.conf "$STATE_DIR/probe/etc/immersive.conf" || true
-    [ -f /etc/hostname ] && cp /etc/hostname "$STATE_DIR/probe/etc/hostname" || true
+    /usr/bin/immersive-preserve-state / "$STATE_DIR/probe" "$LATEST_TAG" "$INACTIVE_DEV" || \
+        fail "device data preservation failed; refusing to switch"
     sync; umount "$STATE_DIR/probe"
 else
     fail "new slot does not mount; refusing to switch"
@@ -141,7 +141,7 @@ log "applying boot files + switching root to $INACTIVE_DEV ..."
 mkdir -p /run/im-boot
 mount /dev/mmcblk0p1 /run/im-boot
 cp /run/im-boot/cmdline.txt /run/im-boot/cmdline.bak
-cp -rf "$TMP/boot"/. /run/im-boot/
+/usr/bin/immersive-install-boot "$TMP/boot" /run/im-boot || fail "boot identity preservation failed"
 rm -rf "$TMP/boot"
 NEW_CMDLINE=$(sed -E "s|root=/dev/mmcblk0p[23]|root=$INACTIVE_DEV|" /run/im-boot/cmdline.txt)
 echo "$NEW_CMDLINE" > /run/im-boot/cmdline.txt

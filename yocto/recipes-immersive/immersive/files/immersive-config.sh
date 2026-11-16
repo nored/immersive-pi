@@ -16,8 +16,11 @@ NODE=$(get node);          NODE=${NODE:-$(hostname)}
 CTRL=$(get control_host);  CTRL=${CTRL:-pi-13.local}
 HOST=$(get hostname);      HOST=${HOST:-$NODE}
 TOKEN=$(get api_token)
-ALLOW=$(get allow_poweroff); ALLOW=${ALLOW:-true}
+ALLOW=$(get allow_poweroff); ALLOW=${ALLOW:-false}
+REBOOT=$(get allow_reboot); REBOOT=${REBOOT:-true}
 TZ=$(get timezone)
+OUTPUT_MODE=$(get display_mode); OUTPUT_MODE=${OUTPUT_MODE:-1280x800@60}
+printf '%s' "$OUTPUT_MODE" | grep -Eq '^[0-9]+x[0-9]+@[0-9]+$' || { echo "Invalid display_mode" >&2; exit 1; }
 
 mkdir -p /run/immersive
 echo "$ROLE" > /run/immersive/role
@@ -38,11 +41,12 @@ cat > /run/immersive/config.json <<EOF
   "admin_port": 8080,
   "clock_port": 8555,
   "media_dir": "/opt/immersive/media",
-  "drm": { "device": "/dev/dri/card0", "connector": "auto" },
-  "preview": { "width": 320, "height": 180, "fps": 8, "jpeg_quality": 60 },
+  "drm": { "device": "/dev/dri/card0", "connector": "auto", "mode": "$OUTPUT_MODE" },
   "heartbeat_hz": 1,
+  "buffer_frames": 24,
   "loop": true,
-  "allow_poweroff": $ALLOW
+  "allow_poweroff": $ALLOW,
+  "allow_reboot": $REBOOT
 }
 EOF
 

@@ -1,0 +1,21 @@
+{
+  "title": "Explore the Blue: 360\u00b0 Serengeti of the Sea",
+  "publisher": "NOAA Office of National Marine Sanctuaries",
+  "source_page": "https://sanctuaries.noaa.gov/vr/monterey-bay/serengeti/",
+  "download": "https://sanctuaries.noaa.gov/media/vr/explore-the-blue-360-serengeti-of-the-sea.mp4.zip",
+  "reuse_notice": "https://sanctuaries.noaa.gov/disclaimer.html",
+  "reuse_basis": "NOAA website states its presented information is public information and may be distributed or copied. No agency endorsement claimed.",
+  "source_dimensions": [
+    5040,
+    2520
+  ],
+  "excerpt_source_seconds": [
+    58,
+    90
+  ],
+  "excerpt_file": "noaa-kelp-fish-excerpt.mp4",
+  "excerpt_sha256": "8734ba973f7bc2fbe195e849d2cb93b63ce0da3c40d21a0e071f327dbeff4205",
+  "processing": "Monoscopic equirectangular footage projected through experimental scan-derived wall mappings; native 1280x800 clips, provisional overlap blending; no audio",
+  "full_archive_verified": true,
+  "archive_md5_matches_publisher": true
+}

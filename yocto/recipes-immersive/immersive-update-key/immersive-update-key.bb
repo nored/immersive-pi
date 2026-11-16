@@ -6,9 +6,10 @@ LICENSE = "MIT"
 LIC_FILES_CHKSUM = "file://${COMMON_LICENSE_DIR}/MIT;md5=0835ade698e0bcf8506ecda2f7b4f302"
 
 # Secret path on the build host — not in SRC_URI, never fetched.
-IMMERSIVE_UPDATE_KEY_PATH ??= "${THISDIR}/../../secrets/update.key"
+IMMERSIVE_UPDATE_KEY_PATH ??= "${IMMERSIVE_LAYER_DIR}/secrets/update.key"
 
 S = "${WORKDIR}"
+do_install[file-checksums] += "${IMMERSIVE_UPDATE_KEY_PATH}:True"
 
 do_install() {
     if [ ! -f "${IMMERSIVE_UPDATE_KEY_PATH}" ]; then
@@ -20,6 +21,6 @@ do_install() {
 
 FILES:${PN} = "${sysconfdir}/immersive-update.key"
 
-# Machine-specific so a key change retriggers the rebuild.
+# Machine-specific packaging; file-checksums above tracks key rotation.
 PACKAGE_ARCH = "${MACHINE_ARCH}"
 RDEPENDS:${PN} = ""
